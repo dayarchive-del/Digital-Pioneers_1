@@ -1,7 +1,6 @@
-# ✅ TODO / Still To Do — Digital Pioneers (SIH 2026)
+# ✅ TODO / Still To Do (SIH 2026)
 
-> Generated from `C:\Users\admin\Desktop\sih` + notebook calibration checklist (Sec 21).
-> ChatGPT share link (https://chatgpt.com/share/6ab7da15-e40c-83ee-8800-237027bfa411) requires login — **paste its TODO items here** if you want them merged.
+> From notebook calibration checklist (Sec 21).
 
 ## 🔴 Must-do before SIH demo
 - [ ] Collect REAL dataset: 300+ photos each of Ready / Broken / Bent, varied light, angles, batches, backgrounds
