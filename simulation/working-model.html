@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Smart Solar Agarbatti Drying Chamber — Working Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#14171a; --panel:#1b1f23; --panel2:#20252a; --border:#2b3137;
+  --text:#e7e5e0; --muted:#8b929a; --hot:#ff6a39; --amber:#e8b64a; --green:#57d68d; --red:#ff5a5a;
+  --mono:'IBM Plex Mono',monospace; --disp:'Space Grotesk',sans-serif;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){ --bg:#14171a; } }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--disp);overflow:hidden}
+#app{display:flex;height:100vh;width:100vw}
+#viewport{position:relative;flex:0 0 65%;height:100%;border-right:1px solid var(--border)}
+#viewport canvas{display:block;width:100%;height:100%}
+#panel{flex:1;height:100%;overflow-y:auto;background:var(--panel);padding:16px 16px 40px}
+h1{font-size:15px;font-weight:700;margin:0 0 2px;letter-spacing:.2px}
+.sub{font-size:11px;color:var(--muted);margin-bottom:14px}
+section{border:1px solid var(--border);border-radius:6px;background:var(--panel2);padding:12px;margin-bottom:10px}
+section h2{font-size:11px;font-weight:500;color:var(--muted);margin:0 0 10px;text-transform:lowercase;letter-spacing:.3px}
+.row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-family:var(--mono);font-size:12.5px}
+.row .v{color:var(--text)}
+.stage{font-family:var(--mono);font-size:16px;color:var(--amber);margin-bottom:8px}
+.stage.ready{color:var(--green)} .stage.error{color:var(--red)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.chip{font-family:var(--mono);font-size:10.5px;padding:3px 7px;border-radius:4px;border:1px solid var(--border);color:var(--muted)}
+.chip.on{color:#0d0f11;background:var(--hot);border-color:var(--hot)}
+canvas.chart{width:100%;height:70px;display:block;border-radius:4px;background:#14171a}
+button{font-family:var(--disp);font-size:12px;cursor:pointer;background:#262c32;border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:5px}
+button:hover{border-color:var(--hot)}
+button.primary{background:var(--hot);color:#14171a;border-color:var(--hot);font-weight:700}
+button.danger{border-color:var(--red);color:var(--red)}
+button:disabled{opacity:.35;cursor:default}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.toggle{display:flex;gap:6px;margin-bottom:10px}
+.toggle button{flex:1}
+.toggle button.active{background:var(--amber);color:#14171a;border-color:var(--amber)}
+label{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin:8px 0 3px}
+input[type=range]{width:100%;accent-color:var(--hot)}
+.viewbtns{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:3}
+.viewbtns button{background:rgba(20,23,26,.8);font-size:11px;padding:5px 8px}
+.info{position:absolute;bottom:10px;left:10px;right:10px;font-family:var(--mono);font-size:10.5px;color:var(--muted);background:rgba(20,23,26,.75);border-radius:4px;padding:6px 8px;pointer-events:none;z-index:3}
+#labelLayer{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden}
+.partLabel{position:absolute;transform:translate(-50%,-100%);font-family:var(--mono);font-size:10px;color:#dfe3e6;background:rgba(20,23,26,.72);border:1px solid #3a4046;border-radius:3px;padding:2px 5px;white-space:nowrap}
+.partLabel::after{content:'';position:absolute;left:50%;bottom:-5px;width:1px;height:5px;background:#5a6168;transform:translateX(-50%)}
+.partLabel.hot{border-color:var(--hot);color:var(--hot)}
+#log{font-family:var(--mono);font-size:10.5px;color:#8fdc9c;background:#0e1012;border-radius:4px;padding:6px;height:110px;overflow-y:auto;line-height:1.5}
+#testResults{font-family:var(--mono);font-size:11px;margin-top:8px}
+.tr{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)}
+.tr .pass{color:var(--green)} .tr .fail{color:var(--red)} .tr .pending{color:var(--muted)}
+footer{font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5}
+@media (max-width:860px){
+  #app{flex-direction:column;height:auto;min-height:100vh;overflow:visible}
+  html,body{overflow:auto}
+  #viewport{flex:none;height:44vh}
+  #panel{flex:none;height:auto;overflow:visible}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="viewport">
+    <div class="viewbtns">
+      <button id="vNormal" class="active">Normal</button>
+      <button id="vExplode">Exploded</button>
+      <button id="vCutaway">Cutaway</button>
+      <button id="vReset">Reset cam</button>
+      <button id="vLabels" class="active">Labels: on</button>
+    </div>
+    <div class="info" id="hoverInfo">Drag to rotate · scroll to zoom · tap a part for its label</div>
+    <div id="labelLayer"></div>
+  </div>
+  <div id="panel">
+    <h1>Smart Solar Agarbatti Drying Chamber</h1>
+    <div class="sub">ESP32 control-logic simulation — not a model of real heat transfer</div>
+
+    <section>
+      <h2>status</h2>
+      <div class="stage" id="stageLabel">IDLE</div>
+      <div class="row"><span>Temperature</span><span class="v" id="tempV">24.0 °C</span></div>
+      <div class="row"><span>Humidity</span><span class="v" id="rhV">40.0 %</span></div>
+      <div class="row"><span>Elapsed</span><span class="v" id="elapsedV">0s</span></div>
+      <div class="chips" id="chips"></div>
+      <canvas class="chart" id="chart"></canvas>
+    </section>
+
+    <section>
+      <h2>controls</h2>
+      <div class="btnrow">
+        <button class="primary" id="btnStart">START</button>
+        <button class="danger" id="btnStop">STOP</button>
+        <button id="btnReset">RESET</button>
+      </div>
+      <div class="btnrow">
+        <button id="btnTrolley">Slide trolleys out</button>
+      </div>
+      <label>Time scale</label>
+      <div class="toggle" id="timeScale">
+        <button data-v="1" class="active">1x</button>
+        <button data-v="5">5x</button>
+        <button data-v="20">20x</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>manual sensor override</h2>
+      <div class="toggle" id="modeToggle">
+        <button data-v="auto" class="active">Auto physics</button>
+        <button data-v="manual">Manual</button>
+      </div>
+      <label>Temperature — <span id="tempSliderV">24</span> °C</label>
+      <input type="range" id="tempSlider" min="0" max="80" value="24" disabled>
+      <label>Relative humidity — <span id="rhSliderV">40</span> %</label>
+      <input type="range" id="rhSlider" min="0" max="100" value="40" disabled>
+    </section>
+
+    <section>
+      <h2>solar &amp; battery</h2>
+      <label>Sunlight — <span id="sunV">70</span> %</label>
+      <input type="range" id="sunSlider" min="0" max="100" value="70">
+      <div class="row"><span>Battery</span><span class="v" id="battV">78 %</span></div>
+      <footer>A 10–20 W panel is a charging-demo only; it cannot continuously run a heater load this size.</footer>
+    </section>
+
+    <section>
+      <h2>test runner</h2>
+      <button id="btnTest">Run test sequence</button>
+      <div id="testResults"></div>
+    </section>
+
+    <section>
+      <h2>serial monitor</h2>
+      <div id="log"></div>
+    </section>
+
+    <footer>Simulation of control logic only. It does not model real heat transfer or moisture loss.</footer>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ===== CONFIG ===== */
+const CFG = {
+  pins:{dht:4,oledSDA:21,oledSCL:22,heater:25,circFan:26,exhFan:27,ledR:16,ledY:17,ledG:18,buzzer:19,start:32,stop:33,reset:23},
+  thresholds:{s1:45,s2:50,s3temp:52,s3rh:35,cool:30,error:60},
+  hyst:1
+};
+let state='IDLE', temp=24, rh=40, elapsed=0, timeScale=1, mode='auto';
+let heaterOn=false, circOn=false, exhOn=false, led='none', buzz=false;
+const chartData=[];
+
+/* ===== STATE MACHINE (mirrors Arduino updateController()) ===== */
+function updateController(dt){
+  elapsed += dt;
+  heaterOn=false; circOn=false; exhOn=false; led='none'; buzz=false;
+  switch(state){
+    case 'IDLE': break;
+    case 'STAGE1':
+      heaterOn=true; circOn=true; exhOn = rh > 60; led='yellow';
+      if(temp >= CFG.thresholds.s1 + CFG.hyst) { state='STAGE2'; log(`STAGE 1 -> STAGE 2`); }
+      break;
+    case 'STAGE2':
+      heaterOn=true; circOn=true; exhOn=true; led='yellow';
+      if(temp >= CFG.thresholds.s2 + CFG.hyst) { state='STAGE3'; log(`STAGE 2 -> STAGE 3`); }
+      break;
+    case 'STAGE3':
+      heaterOn=true; circOn=true; exhOn=true; led='yellow';
+      if(temp >= CFG.thresholds.s3temp && rh <= CFG.thresholds.s3rh) { state='COOLING'; log(`STAGE 3 -> COOLING`); }
+      break;
+    case 'COOLING':
+      circOn=true; exhOn=true; led='yellow';
+      if(temp <= CFG.thresholds.cool - CFG.hyst) { state='READY'; log(`COOLING -> READY`); buzzBeep(); }
+      break;
+    case 'READY':
+      led='green';
+      if(!trolleyOut){ trolleyOut=true; document.getElementById('btnTrolley').textContent='Slide trolleys in'; log('Batch detected dry — trolleys auto-ejected for unloading'); }
+      break;
+    case 'ERROR': circOn=true; exhOn=true; led='red'; buzz=true; break;
+  }
+  if(state!=='ERROR' && temp > CFG.thresholds.error){ state='ERROR'; log('OVER-TEMP -> ERROR'); }
+
+  if(mode==='auto'){
+    let dT = heaterOn ? (circOn?0.9:0.5) : (exhOn?-0.6:-0.15);
+    let dR = (heaterOn&&exhOn) ? -0.6 : (heaterOn ? -0.25 : 0.1);
+    temp += dT*dt; rh += dR*dt;
+    temp = Math.max(15,Math.min(90,temp)); rh = Math.max(10,Math.min(90,rh));
+  }
+  chartData.push({t:temp,r:rh}); if(chartData.length>150) chartData.shift();
+}
+let beepUntil=0;
+function buzzBeep(){ buzz=true; beepUntil=performance.now()+400; }
+
+let logCount=0;
+function log(msg){
+  const el=document.getElementById('log');
+  const line=document.createElement('div');
+  line.textContent=`[${elapsed.toFixed(1)}s] T=${temp.toFixed(1)}C RH=${rh.toFixed(1)}% STAGE=${state} H=${heaterOn?1:0} C=${circOn?1:0} E=${exhOn?1:0}`;
+  el.appendChild(line); el.scrollTop=el.scrollHeight;
+  if(++logCount>200) el.removeChild(el.firstChild);
+}
+
+/* ===== UI wiring ===== */
+document.getElementById('btnStart').onclick=()=>{ if(state==='IDLE'||state==='READY'){ state='STAGE1'; elapsed=0; log('START pressed');
+  if(trolleyOut){ trolleyOut=false; document.getElementById('btnTrolley').textContent='Slide trolleys out'; log('Trolleys loaded back in for new batch'); } } };
+document.getElementById('btnStop').onclick=()=>{ state='IDLE'; log('STOP pressed — all outputs off'); };
+document.getElementById('btnReset').onclick=()=>{ state='IDLE'; log('RESET pressed'); };
+let trolleyOut=false;
+document.getElementById('btnTrolley').onclick=(e)=>{
+  trolleyOut=!trolleyOut;
+  e.target.textContent = trolleyOut ? 'Slide trolleys in' : 'Slide trolleys out';
+  log(trolleyOut ? 'Trolleys ejected for unloading' : 'Trolleys loaded back into chamber');
+};
+
+document.querySelectorAll('#timeScale button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#timeScale button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); timeScale=parseFloat(b.dataset.v);
+});
+document.querySelectorAll('#modeToggle button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#modeToggle button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); mode=b.dataset.v;
+  document.getElementById('tempSlider').disabled = mode!=='manual';
+  document.getElementById('rhSlider').disabled = mode!=='manual';
+});
+const tempSlider=document.getElementById('tempSlider'), rhSlider=document.getElementById('rhSlider');
+tempSlider.oninput=()=>{ document.getElementById('tempSliderV').textContent=tempSlider.value; if(mode==='manual') temp=parseFloat(tempSlider.value); };
+rhSlider.oninput=()=>{ document.getElementById('rhSliderV').textContent=rhSlider.value; if(mode==='manual') rh=parseFloat(rhSlider.value); };
+
+const sunSlider=document.getElementById('sunSlider');
+let battery=78;
+sunSlider.oninput=()=>{ document.getElementById('sunV').textContent=sunSlider.value; };
+
+/* ===== Test runner ===== */
+const TESTS=[
+ {name:'Initial',t:24,r:40,expect:'IDLE',action:null},
+ {name:'Start',t:24,r:40,expect:'STAGE1',action:'start'},
+ {name:'Stage 1 transition',t:45,r:50,expect:'STAGE2',action:null},
+ {name:'Stage 2 transition',t:50,r:40,expect:'STAGE3',action:null},
+ {name:'Final drying',t:52,r:35,expect:'COOLING',action:null},
+ {name:'Cooling',t:30,r:35,expect:'READY',action:null},
+ {name:'Over-temperature',t:65,r:35,expect:'ERROR',action:null},
+ {name:'Stop',t:40,r:40,expect:'IDLE',action:'stop'},
+ {name:'Reset',t:40,r:40,expect:'IDLE',action:'reset'}
+];
+document.getElementById('btnTest').onclick=async ()=>{
+  const out=document.getElementById('testResults'); out.innerHTML='';
+  mode='manual'; state='IDLE';
+  for(const test of TESTS){
+    temp=test.t; rh=test.r;
+    if(test.action==='start') state='STAGE1';
+    if(test.action==='stop') state='IDLE';
+    if(test.action==='reset') state='IDLE';
+    for(let i=0;i<8;i++) updateController(0.15);
+    const pass = state===test.expect;
+    const row=document.createElement('div'); row.className='tr';
+    row.innerHTML=`<span>${test.name}</span><span class="${pass?'pass':'fail'}">${pass?'PASS':'FAIL ('+state+')'}</span>`;
+    out.appendChild(row);
+    await new Promise(r=>setTimeout(r,150));
+  }
+  mode='auto'; document.querySelector('#modeToggle button[data-v=auto]').click();
+};
+
+/* ===== Chart ===== */
+const chartCanvas=document.getElementById('chart');
+function drawChart(){
+  const ctx=chartCanvas.getContext('2d');
+  const w=chartCanvas.clientWidth, h=chartCanvas.clientHeight;
+  chartCanvas.width=w*devicePixelRatio; chartCanvas.height=h*devicePixelRatio;
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  ctx.clearRect(0,0,w,h);
+  if(chartData.length<2) return;
+  const drawLine=(key,max,color)=>{
+    ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=1.4;
+    chartData.forEach((d,i)=>{
+      const x=(i/(chartData.length-1))*w, y=h-(d[key]/max)*h;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  };
+  drawLine('t',90,'#ff6a39'); drawLine('r',100,'#57d68d');
+}
+
+/* ===== 3D SCENE ===== */
+const vp=document.getElementById('viewport');
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x14171a);
+const camera=new THREE.PerspectiveCamera(45, vp.clientWidth/vp.clientHeight, 0.1, 1000);
+let camDist=140, camTheta=0.9, camPhi=1.1;
+function updateCam(){
+  camera.position.set(camDist*Math.sin(camPhi)*Math.sin(camTheta), camDist*Math.cos(camPhi), camDist*Math.sin(camPhi)*Math.cos(camTheta));
+  camera.lookAt(0,10,0);
+}
+updateCam();
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(vp.clientWidth, vp.clientHeight);
+vp.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0x888888,1));
+const dl=new THREE.DirectionalLight(0xffffff,0.9); dl.position.set(60,90,40); scene.add(dl);
+const grid=new THREE.GridHelper(220,22,0x333a40,0x23282d); scene.add(grid);
+
+const root=new THREE.Group(); scene.add(root);
+
+// Chamber
+const chamberMat=new THREE.MeshStandardMaterial({color:0x565f68,metalness:0.5,roughness:0.5,transparent:true,opacity:0.25});
+const chamber=new THREE.Mesh(new THREE.BoxGeometry(60,45,45), chamberMat);
+chamber.position.y=25; root.add(chamber);
+const chamberEdges=new THREE.LineSegments(new THREE.EdgesGeometry(chamber.geometry), new THREE.LineBasicMaterial({color:0x9aa3ab}));
+chamberEdges.position.copy(chamber.position); root.add(chamberEdges);
+
+// Rails (the trolleys roll out along these, toward the viewer / +z, front of the chamber)
+const railMat=new THREE.MeshStandardMaterial({color:0x707880,metalness:0.7,roughness:0.35});
+[-19,19].forEach(x=>{
+  [10,20,30].forEach(y=>{
+    const rail=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,70), railMat);
+    rail.position.set(x,y-1.6,-5); root.add(rail);
+  });
+});
+
+// Trolleys (wire-mesh trays on wheeled frames that slide out of the chamber front)
+const trays=[];
+for(let i=0;i<3;i++){
+  const tray=new THREE.Group(); tray.position.set(0, 10+i*10, 0); tray.userData={label:'Trolley '+(i+1)+' (wire-mesh tray)',info:'Slides out on rails to unload'};
+  const frameMat=new THREE.MeshStandardMaterial({color:0x9aa3ab,metalness:0.6,roughness:0.4});
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(42,1,22), frameMat);
+  frame.position.y=-2; tray.add(frame);
+  // wire mesh surface (grid of thin bars)
+  for(let m=-20;m<=20;m+=4){
+    const bar=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,22), new THREE.MeshStandardMaterial({color:0xb7bec4}));
+    bar.position.set(m,-1.4,0); tray.add(bar);
+  }
+  // wheels riding the rails
+  [-19,19].forEach(x=>[-9,9].forEach(z=>{
+    const wheel=new THREE.Mesh(new THREE.CylinderGeometry(1.1,1.1,1,10), new THREE.MeshStandardMaterial({color:0x222528}));
+    wheel.rotation.x=Math.PI/2; wheel.position.set(x,-2.6,z); tray.add(wheel);
+  }));
+  for(let s=0;s<8;s++){
+    const stick=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,20,6), new THREE.MeshStandardMaterial({color:0x8a5a2e}));
+    stick.rotation.z=Math.PI/2; stick.position.set(-18+s*5, 0, 0);
+    tray.add(stick);
+  }
+  tray.userData.homeZ=0;
+  root.add(tray); trays.push(tray);
+}
+
+// DHT22 sensor, visible inside the chamber near the top tray
+const dht=new THREE.Mesh(new THREE.BoxGeometry(2.5,3.5,1.2), new THREE.MeshStandardMaterial({color:0x2f6f8f}));
+dht.position.set(24,32,10); dht.userData={label:'DHT22 temp/RH sensor',info:'GPIO 4, mounted inside chamber'};
+root.add(dht);
+
+// ESP32-CAM, mounted above the trays looking down
+const camMount=new THREE.Group(); camMount.position.set(0,42,5);
+const camBody=new THREE.Mesh(new THREE.BoxGeometry(4,2,4), new THREE.MeshStandardMaterial({color:0x1c1c1c}));
+const lens=new THREE.Mesh(new THREE.CylinderGeometry(0.9,0.9,1.2,12), new THREE.MeshStandardMaterial({color:0x0a0a0a,metalness:0.8,roughness:0.2}));
+lens.rotation.x=Math.PI/2; lens.position.y=-1.4; camBody.add(lens);
+camMount.add(camBody); camMount.userData={label:'ESP32-CAM (OV2640)',info:'Overhead, looks down at trolleys'};
+root.add(camMount);
+
+// Heater
+const heaterMat=new THREE.MeshStandardMaterial({color:0x333333,emissive:0x000000,metalness:0.6,roughness:0.4});
+const heater=new THREE.Mesh(new THREE.BoxGeometry(14,4,20), heaterMat);
+heater.position.set(0,4,-15); heater.userData={label:'12V PTC heater',info:'GPIO 25 via MOSFET'};
+root.add(heater);
+
+// Fans
+function makeFan(x,z,label,info){
+  const g=new THREE.Group(); g.position.set(x,25,z); g.userData={label,info};
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(6,0.6,8,20), new THREE.MeshStandardMaterial({color:0x3a4046}));
+  ring.rotation.y=Math.PI/2; g.add(ring); // disc normal along X: faces across the chamber, toward the opposite fan
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(1,1,1.2,12), new THREE.MeshStandardMaterial({color:0x2a2f34}));
+  hub.rotation.z=Math.PI/2; g.add(hub);
+  const blades=new THREE.Group();
+  for(let i=0;i<5;i++){
+    const theta=(i/5)*Math.PI*2;
+    const b=new THREE.Mesh(new THREE.BoxGeometry(0.3,1.4,5), new THREE.MeshStandardMaterial({color:0x8b939b}));
+    b.position.set(0, Math.cos(theta)*2.8, Math.sin(theta)*2.8);
+    b.rotation.x=theta; // each blade laid out radially in the Y-Z disc plane
+    blades.add(b);
+  }
+  g.add(blades); g.userData.blades=blades;
+  root.add(g); return g;
+}
+const circFan=makeFan(-28,0,'Circulation fan 120mm','GPIO 26 via MOSFET');
+const exhFan=makeFan(28,0,'Exhaust fan 120mm','GPIO 27 via MOSFET');
+
+// Electronics compartment (simplified labelled blocks)
+const elecGroup=new THREE.Group(); elecGroup.position.set(0,25,32); root.add(elecGroup);
+const elecParts=[
+ {n:'ESP32 DevKit V1',x:-24,c:0x2c3e50},
+ {n:'DHT22 sensor',x:-16,c:0x34495e},
+ {n:'0.96" OLED',x:-8,c:0x1a1a1a},
+ {n:'MOSFET driver x2',x:0,c:0x555555},
+ {n:'W1209 thermal ctrl',x:8,c:0x445566},
+ {n:'ESP32-CAM OV2640',x:16,c:0x333333},
+ {n:'12V 5A SMPS',x:24,c:0x666666}
+];
+elecParts.forEach(p=>{
+  const m=new THREE.Mesh(new THREE.BoxGeometry(5,4,3), new THREE.MeshStandardMaterial({color:p.c}));
+  m.position.set(p.x,0,0); m.userData={label:p.n,info:'Electronics compartment'};
+  elecGroup.add(m);
+});
+// battery + buck
+const battery3d=new THREE.Mesh(new THREE.BoxGeometry(8,5,5), new THREE.MeshStandardMaterial({color:0x2f6b3a}));
+battery3d.position.set(-38,8,32); battery3d.userData={label:'12V 7Ah battery',info:'Power storage'}; root.add(battery3d);
+
+// Solar panel
+const solarGroup=new THREE.Group(); solarGroup.position.set(48,20,-25); solarGroup.rotation.x=-0.5;
+const panelMat=new THREE.MeshStandardMaterial({color:0x1a2a4a,emissive:0x000000,metalness:0.3,roughness:0.5});
+const panel=new THREE.Mesh(new THREE.BoxGeometry(22,1,14), panelMat);
+panel.userData={label:'Solar panel 10-20W',info:'Charging demo only'};
+solarGroup.add(panel); root.add(solarGroup);
+const chargeCtrl=new THREE.Mesh(new THREE.BoxGeometry(4,3,2), new THREE.MeshStandardMaterial({color:0x222222,emissive:0x000000}));
+chargeCtrl.position.set(48,10,-8); chargeCtrl.userData={label:'10A charge controller',info:''}; root.add(chargeCtrl);
+
+// Particles
+const PCOUNT=200;
+const pGeo=new THREE.BufferGeometry();
+const pPos=new Float32Array(PCOUNT*3), pVel=[];
+for(let i=0;i<PCOUNT;i++){
+  pPos[i*3]=(Math.random()-0.5)*50; pPos[i*3+1]=5+Math.random()*35; pPos[i*3+2]=(Math.random()-0.5)*35;
+  pVel.push({x:(Math.random()-0.5)*0.3, y:Math.random()*0.4+0.1, z:(Math.random()-0.5)*0.3});
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
+const pMat=new THREE.PointsMaterial({color:0x6699ff,size:0.8,transparent:true,opacity:0});
+const particles=new THREE.Points(pGeo,pMat); root.add(particles);
+
+// Wires — thin, semi-transparent polylines routed along the frame edges, not floating cables
+function wirePath(points,color){
+  const geo=new THREE.BufferGeometry().setFromPoints(points.map(p=>new THREE.Vector3(...p)));
+  const mat=new THREE.LineBasicMaterial({color,transparent:true,opacity:0.55});
+  const line=new THREE.Line(geo,mat); root.add(line); return line;
+}
+// heater power: heater -> up the rear wall -> across the top -> down into the electronics box
+wirePath([[0,4,-15],[0,4,-22],[0,46,-22],[0,46,32],[0,25,32]], 0xdd3333);
+// battery -> along the floor -> up into the SMPS/buck converter
+wirePath([[-38,8,32],[-38,2,32],[24,2,32],[24,25,32]], 0x222222);
+// solar charge controller -> battery
+wirePath([[48,10,-8],[48,2,-8],[-38,2,25],[-38,8,32]], 0xdd8822);
+// buck converter (5V) -> ESP32
+wirePath([[24,25,32],[-24,25,32]], 0xdddd33);
+
+/* ===== Persistent part / sensor labels (screen-projected, always visible) ===== */
+const labelLayer=document.getElementById('labelLayer');
+let labelsOn=true;
+const labelDefs=[
+  {obj:heater, text:'PTC Heater · GPIO25', hot:true},
+  {obj:circFan, text:'Circulation Fan · GPIO26'},
+  {obj:exhFan, text:'Exhaust Fan · GPIO27'},
+  {obj:dht, text:'DHT22 Sensor · GPIO4'},
+  {obj:camMount, text:'ESP32-CAM (OV2640)'},
+  {obj:battery3d, text:'12V 7Ah Battery'},
+  {obj:panel, text:'Solar Panel 10-20W'},
+  {obj:chargeCtrl, text:'Charge Controller 10A'},
+  {obj:trays[0], text:'Trolley 1'},
+  {obj:trays[1], text:'Trolley 2'},
+  {obj:trays[2], text:'Trolley 3'},
+];
+elecGroup.children.forEach(m=>{ if(!/DHT22|ESP32-CAM/.test(m.userData.label)) labelDefs.push({obj:m, text:m.userData.label}); });
+const labelEls=labelDefs.map(d=>{
+  const el=document.createElement('div'); el.className='partLabel'+(d.hot?' hot':'');
+  el.textContent=d.text; labelLayer.appendChild(el); return el;
+});
+const _wpos=new THREE.Vector3();
+function updateLabels(){
+  labelLayer.style.display = labelsOn ? 'block' : 'none';
+  if(!labelsOn) return;
+  const rect=renderer.domElement.getBoundingClientRect();
+  labelDefs.forEach((d,i)=>{
+    d.obj.getWorldPosition(_wpos);
+    _wpos.project(camera);
+    const behind = _wpos.z>1;
+    const x=(_wpos.x*0.5+0.5)*rect.width, y=(-_wpos.y*0.5+0.5)*rect.height;
+    const el=labelEls[i];
+    if(behind || x<-40||x>rect.width+40||y<-20||y>rect.height+20){ el.style.display='none'; return; }
+    el.style.display='block'; el.style.left=x+'px'; el.style.top=(y-10)+'px';
+  });
+}
+document.getElementById('vLabels').onclick=(e)=>{
+  labelsOn=!labelsOn; e.target.textContent='Labels: '+(labelsOn?'on':'off'); e.target.classList.toggle('active',labelsOn);
+};
+
+/* Raycasting for tap/hover labels */
+const raycaster=new THREE.Raycaster(); const mouseNDC=new THREE.Vector2();
+function pick(clientX,clientY){
+  const rect=renderer.domElement.getBoundingClientRect();
+  mouseNDC.x=((clientX-rect.left)/rect.width)*2-1;
+  mouseNDC.y=-((clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouseNDC,camera);
+  const targets=[heater,circFan,exhFan,battery3d,panel,chargeCtrl,dht,camMount,...elecGroup.children,...trays];
+  const hits=raycaster.intersectObjects(targets,true);
+  const info=document.getElementById('hoverInfo');
+  if(hits.length){
+    let obj=hits[0].object; while(obj && !obj.userData.label) obj=obj.parent;
+    if(obj) info.textContent=`${obj.userData.label} — ${obj.userData.info||''}`;
+  }
+}
+renderer.domElement.addEventListener('click',e=>pick(e.clientX,e.clientY));
+
+/* Custom orbit controls */
+let dragging=false, lastX=0,lastY=0;
+renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;});
+window.addEventListener('pointerup',()=>dragging=false);
+window.addEventListener('pointermove',e=>{
+  if(!dragging) return;
+  camTheta -= (e.clientX-lastX)*0.006; camPhi -= (e.clientY-lastY)*0.006;
+  camPhi=Math.max(0.25,Math.min(1.5,camPhi));
+  lastX=e.clientX; lastY=e.clientY; updateCam();
+});
+renderer.domElement.addEventListener('wheel',e=>{
+  camDist=Math.max(60,Math.min(260,camDist+e.deltaY*0.15)); updateCam(); e.preventDefault();
+},{passive:false});
+
+/* View modes */
+let viewMode='normal';
+document.getElementById('vNormal').onclick=()=>setView('normal');
+document.getElementById('vExplode').onclick=()=>setView('explode');
+document.getElementById('vCutaway').onclick=()=>setView('cutaway');
+document.getElementById('vReset').onclick=()=>{camDist=140;camTheta=0.9;camPhi=1.1;updateCam();};
+function setView(v){
+  viewMode=v;
+  document.querySelectorAll('.viewbtns button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('v'+v.charAt(0).toUpperCase()+v.slice(1)).classList.add('active');
+  chamberMat.opacity = v==='cutaway' ? 0.06 : 0.25;
+  const off = v==='explode' ? 1: 0;
+  heater.position.z = -15 - off*14;
+  circFan.position.x = -28 - off*14;
+  exhFan.position.x = 28 + off*14;
+  elecGroup.position.z = 32 + off*12;
+  trays.forEach((t,i)=>{ t.position.y = 10+i*10 + off*(i*6); });
+}
+function updateTrolleys(dtReal){
+  const targetZ = trolleyOut ? 38 : 0;
+  trays.forEach(t=>{ t.position.z += (targetZ - t.position.z) * Math.min(1,dtReal*2.2); });
+}
+
+/* Resize */
+function onResize(){
+  camera.aspect=vp.clientWidth/vp.clientHeight; camera.updateProjectionMatrix();
+  renderer.setSize(vp.clientWidth, vp.clientHeight);
+}
+window.addEventListener('resize',onResize);
+
+/* ===== Animation loop ===== */
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let lastT=performance.now(), fanSpeed=0, running=false;
+function frame(now){
+  requestAnimationFrame(frame);
+  const dtReal=Math.min((now-lastT)/1000,0.25); lastT=now;
+  running = state!=='IDLE';
+  const dtSim=dtReal*timeScale;
+  if(running || mode==='manual'){ updateController(dtSim); } else { chartData.push({t:temp,r:rh}); if(chartData.length>150) chartData.shift(); elapsed+=dtReal; }
+
+  // heater color
+  const heat=Math.max(0,Math.min(1,(temp-20)/50));
+  heaterMat.emissive.setRGB(heat*1.0, heat*0.3, 0);
+  heaterMat.color.setRGB(0.15+heat*0.1,0.1,0.1);
+
+  // fans
+  const targetSpeed = (circOn||exhOn) ? 1 : 0;
+  fanSpeed += (targetSpeed-fanSpeed)*Math.min(1,dtReal*3);
+  if(!reduceMotion || running){
+    circFan.userData.blades.rotation.x += fanSpeed*0.5*(circOn?1:0.2);
+    exhFan.userData.blades.rotation.x += fanSpeed*0.5*(exhOn?1:0.2);
+  }
+
+  // particles
+  pMat.opacity = (heaterOn||circOn) ? 0.7 : 0;
+  const posAttr=pGeo.attributes.position;
+  for(let i=0;i<PCOUNT;i++){
+    let y=posAttr.getY(i)+pVel[i].y*(heaterOn?1.5:0.4);
+    let x=posAttr.getX(i)+pVel[i].x*(circOn?1:0.2);
+    let z=posAttr.getZ(i)+pVel[i].z*(circOn?1:0.2);
+    if(y>42){ y=5; x=(Math.random()-0.5)*50; z=(Math.random()-0.5)*35; }
+    posAttr.setXYZ(i,x,y,z);
+  }
+  posAttr.needsUpdate=true;
+  pMat.color.setHSL(0.6-heat*0.55,0.7,0.55);
+
+  // solar
+  const sun=parseFloat(sunSlider.value)/100;
+  panelMat.emissive.setRGB(sun*0.4,sun*0.35,0.05);
+  chargeCtrl.material.emissive.setRGB(0,sun*0.6,0);
+  if(sun>0.15) battery = Math.min(100, battery + sun*dtReal*0.4*(running?0.3:1));
+  else battery = Math.max(0, battery - (running?dtReal*0.05:0.005));
+  document.getElementById('battV').textContent = battery.toFixed(0)+' %';
+
+  // buzzer visual (LED flash proxy) handled in UI chips
+  if(now<beepUntil) buzz=true;
+
+  updateTrolleys(dtReal);
+  renderer.render(scene,camera);
+  updateLabels();
+  updateUI();
+}
+requestAnimationFrame(frame);
+
+let uiAcc=0;
+function updateUI(){
+  uiAcc++; if(uiAcc%4!==0) return; // ~throttle to ~15Hz
+  const stageEl=document.getElementById('stageLabel');
+  stageEl.textContent=state; stageEl.className='stage'+(state==='READY'?' ready':state==='ERROR'?' error':'');
+  document.getElementById('tempV').textContent=temp.toFixed(1)+' °C';
+  document.getElementById('rhV').textContent=rh.toFixed(1)+' %';
+  document.getElementById('elapsedV').textContent=elapsed.toFixed(0)+'s';
+  if(mode!=='manual'){
+    tempSlider.value=temp; rhSlider.value=rh;
+    document.getElementById('tempSliderV').textContent=temp.toFixed(0);
+    document.getElementById('rhSliderV').textContent=rh.toFixed(0);
+  }
+  const chips=document.getElementById('chips');
+  chips.innerHTML='';
+  [['Heater',heaterOn],['Circ. fan',circOn],['Exhaust',exhOn],['LED '+led,led!=='none'],['Buzzer',buzz]].forEach(([n,on])=>{
+    const c=document.createElement('span'); c.className='chip'+(on?' on':''); c.textContent=n; chips.appendChild(c);
+  });
+  drawChart();
+  if(uiAcc%40===0 && running) log('');
+}
+setView('normal'); onResize();
+</script>
+</body>
+</html>

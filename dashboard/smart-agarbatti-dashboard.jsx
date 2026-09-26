@@ -1,0 +1,1223 @@
+import React, { useState, useRef, useMemo, useCallback } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, BarChart, Bar, Legend,
+} from "recharts";
+import {
+  LayoutDashboard, Thermometer, ScanEye, BarChart3, History as HistoryIcon,
+  Activity, Settings as SettingsIcon, Upload, Play, CheckCircle2, XCircle,
+  AlertTriangle, HelpCircle, Sun, BatteryMedium, Cpu, Fan, Camera as CameraIcon,
+  Droplets, RefreshCw, Info, ChevronRight, Gauge,
+} from "lucide-react";
+
+/* ------------------------------------------------------------------ */
+/* DESIGN TOKENS                                                       */
+/* ------------------------------------------------------------------ */
+const C = {
+  bg: "#1B1714",
+  bgRaised: "#211B16",
+  panel: "#241E19",
+  panelAlt: "#2A2219",
+  border: "#3A3025",
+  borderLight: "#4C4032",
+  text: "#F2ECE3",
+  textMuted: "#A69684",
+  textFaint: "#7D7263",
+  accent: "#C96A2E",
+  accentSoft: "rgba(201,106,46,0.16)",
+  accentBorder: "rgba(201,106,46,0.4)",
+  accept: "#8AA37D",
+  acceptSoft: "rgba(138,163,125,0.14)",
+  acceptBorder: "rgba(138,163,125,0.4)",
+  warn: "#D9A441",
+  warnSoft: "rgba(217,164,65,0.14)",
+  warnBorder: "rgba(217,164,65,0.4)",
+  reject: "#BD5544",
+  rejectSoft: "rgba(189,85,68,0.14)",
+  rejectBorder: "rgba(189,85,68,0.4)",
+  neutral: "#6B6259",
+  neutralSoft: "rgba(107,98,89,0.14)",
+};
+
+const FONT_DISPLAY = '"Archivo", sans-serif';
+const FONT_BODY = '"IBM Plex Sans", sans-serif';
+const FONT_MONO = '"IBM Plex Mono", monospace';
+
+const FontLoader = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    * { box-sizing: border-box; }
+    ::selection { background: ${C.accentSoft}; }
+    input[type=range] { accent-color: ${C.accent}; }
+  `}</style>
+);
+
+/* ------------------------------------------------------------------ */
+/* SEEDED RANDOM + MOCK DATA                                            */
+/* ------------------------------------------------------------------ */
+function mulberry32(seed) {
+  let s = seed;
+  return function () {
+    s |= 0; s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const DEFAULT_SETTINGS = {
+  minConfidence: 50,
+  minWidthPx: 40,
+  maxWidthPx: 220,
+  minHeightPx: 250,
+  maxHeightPx: 900,
+  minBrightness: 60,
+  maxBrightness: 210,
+  pixelsPerMm: null,
+  tempThreshold: 55,
+  humidityThreshold: 35,
+};
+
+/** Direct JS port of quality_decision() from the notebook — the same rule-based
+ *  logic that runs in the backend. Nothing about this function is "demo" —
+ *  it is the real decision engine, so results here match what best.pt + this
+ *  code will produce once a trained model is connected. */
+function qualityDecision(record, dryingStatus, settings) {
+  const within = (v, lo, hi) => {
+    if (v === null || v === undefined) return true;
+    if (lo !== null && lo !== undefined && v < lo) return false;
+    if (hi !== null && hi !== undefined && v > hi) return false;
+    return true;
+  };
+
+  if (dryingStatus === "UNDER_DRYING") {
+    return {
+      status: "UNDER-DRYING", grade: "GRADE C", action: "KEEP DRYING",
+      reason: "ESP32 drying status says the batch is not ready for inspection.",
+    };
+  }
+  if (dryingStatus === "UNKNOWN") {
+    return {
+      status: "UNKNOWN DRYING STATUS", grade: "MANUAL CHECK", action: "CHECK SENSORS",
+      reason: "Drying status is unavailable or invalid.",
+    };
+  }
+  if (record.class === "Broken") {
+    return { status: "BROKEN", grade: "REJECT", action: "REMOVE", reason: "YOLOv8 detected a broken agarbatti." };
+  }
+  if (record.class === "Bent") {
+    return { status: "BENT", grade: "REJECT", action: "REMOVE", reason: "YOLOv8 detected a bent agarbatti." };
+  }
+  if (record.confidence < settings.minConfidence) {
+    return {
+      status: "LOW CONFIDENCE", grade: "MANUAL CHECK", action: "RECHECK IMAGE",
+      reason: `YOLO confidence is only ${record.confidence.toFixed(1)}%.`,
+    };
+  }
+  const reasons = [];
+  if (!within(record.width_px, settings.minWidthPx, settings.maxWidthPx)) reasons.push("width outside calibrated range");
+  if (!within(record.height_px, settings.minHeightPx, settings.maxHeightPx)) reasons.push("length/height outside calibrated range");
+  if (!within(record.brightness, settings.minBrightness, settings.maxBrightness)) reasons.push("brightness outside calibrated range");
+  if (reasons.length) {
+    return { status: "READY BUT OUT OF SPEC", grade: "GRADE C", action: "DOWNGRADE / CHECK", reason: reasons.join("; ") };
+  }
+  return {
+    status: "READY", grade: "GRADE A", action: "ACCEPT",
+    reason: "YOLO found Ready, drying is complete, and enabled OpenCV checks passed.",
+  };
+}
+
+function explainChecklist(record, dryingStatus, decision) {
+  return [
+    { label: "Drying complete", pass: dryingStatus === "READY_TO_INSPECT" },
+    { label: `Visual condition: ${record.class}`, pass: record.class === "Ready" },
+    { label: "Confidence above threshold", pass: decision.status !== "LOW CONFIDENCE" },
+    { label: "Width within range", pass: !decision.reason.includes("width") },
+    { label: "Length within range", pass: !decision.reason.includes("length") },
+    { label: "Brightness within range", pass: !decision.reason.includes("brightness") },
+  ];
+}
+
+/** MOCK CLASSIFICATION LAYER — this is the ONLY part that isn't real yet.
+ *  There is no trained best.pt, so this stands in for a call to the model.
+ *  --------------------------------------------------------------------
+ *  TO CONNECT THE REAL MODEL LATER:
+ *  Replace the body of this function with something like:
+ *
+ *    const form = new FormData();
+ *    form.append("image", imageBlob);
+ *    const res = await fetch("/api/inspect", { method: "POST", body: form });
+ *    const data = await res.json();
+ *    return { class: data.prediction, confidence: data.confidence };
+ *
+ *  Everything downstream (measurement math, decision engine, UI, history,
+ *  batch stats) already expects exactly that shape and needs no changes. */
+function mockYoloClassify(rand, forcedClass) {
+  if (forcedClass) {
+    const conf = forcedClass === "Ready" ? 88 + rand() * 11 : 80 + rand() * 15;
+    return { class: forcedClass, confidence: +conf.toFixed(1) };
+  }
+  const r = rand();
+  const cls = r < 0.6 ? "Ready" : r < 0.8 ? "Broken" : "Bent";
+  const conf = cls === "Ready" ? 82 + rand() * 16 : 75 + rand() * 18;
+  return { class: cls, confidence: +conf.toFixed(1) };
+}
+
+/** REAL lightweight OpenCV-style measurement, done in-browser on the actual
+ *  uploaded pixels: greyscale + a global threshold to separate the agarbatti
+ *  from a plain background, then a bounding box + brightness over that
+ *  region. This is a simplified stand-in for the notebook's contour/ROI
+ *  measurement step (measure_detected_object + extract_colour_features) —
+ *  same idea, run on whatever region YOLO would have boxed. */
+function measureImage(canvas) {
+  const ctx = canvas.getContext("2d");
+  const { width, height } = canvas;
+  const { data } = ctx.getImageData(0, 0, width, height);
+  const n = width * height;
+  const gray = new Float32Array(n);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const v = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+    gray[i] = v;
+    sum += v;
+  }
+  const mean = sum / n;
+  const cornerAvg = (gray[0] + gray[width - 1] + gray[n - width] + gray[n - 1]) / 4;
+  const fgIsDarker = cornerAvg > mean;
+
+  let minX = width, maxX = 0, minY = height, maxY = 0, fgCount = 0, fgSum = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const v = gray[y * width + x];
+      const isFg = fgIsDarker ? v < mean - 12 : v > mean + 12;
+      if (isFg) {
+        fgCount++; fgSum += v;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (fgCount < 40) {
+    minX = width * 0.25; maxX = width * 0.75;
+    minY = height * 0.12; maxY = height * 0.88;
+  }
+  const width_px = Math.max(1, Math.round(maxX - minX));
+  const height_px = Math.max(1, Math.round(maxY - minY));
+  const long = Math.max(width_px, height_px);
+  const short = Math.max(1, Math.min(width_px, height_px));
+  const brightness = fgCount >= 40 ? fgSum / fgCount : mean;
+  return {
+    box: [Math.round(minX), Math.round(minY), Math.round(maxX), Math.round(maxY)],
+    width_px, height_px,
+    aspect_ratio: +(long / short).toFixed(2),
+    brightness: +brightness.toFixed(1),
+  };
+}
+
+function toMm(px, pxPerMm) {
+  if (!pxPerMm || pxPerMm <= 0) return null;
+  return +(px / pxPerMm).toFixed(2);
+}
+
+function buildRecord(cvFeatures, yoloResult, settings) {
+  return {
+    class: yoloResult.class,
+    confidence: yoloResult.confidence,
+    width_px: cvFeatures.width_px,
+    height_px: cvFeatures.height_px,
+    width_mm: toMm(cvFeatures.width_px, settings.pixelsPerMm),
+    height_mm: toMm(cvFeatures.height_px, settings.pixelsPerMm),
+    aspect_ratio: cvFeatures.aspect_ratio,
+    brightness: cvFeatures.brightness,
+    box: cvFeatures.box,
+  };
+}
+
+function generateHistory(rand, settings, count = 42) {
+  const rows = [];
+  const classesW = ["Ready", "Ready", "Ready", "Broken", "Bent"];
+  for (let i = 0; i < count; i++) {
+    const cls = classesW[Math.floor(rand() * classesW.length)];
+    const conf = cls === "Ready" ? 80 + rand() * 18 : 70 + rand() * 25;
+    const width_px = 60 + rand() * 160;
+    const height_px = 260 + rand() * 560;
+    const brightness = 50 + rand() * 170;
+    const drying = rand() < 0.92 ? "READY_TO_INSPECT" : "UNDER_DRYING";
+    const record = {
+      class: cls, confidence: +conf.toFixed(1),
+      width_px: +width_px.toFixed(0), height_px: +height_px.toFixed(0),
+      brightness: +brightness.toFixed(1),
+    };
+    const decision = qualityDecision(record, drying, settings);
+    const hour = 8 + Math.floor(i / 4);
+    const minute = (i * 13) % 60;
+    rows.push({
+      id: `INS-${1000 + i}`,
+      time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+      ...record,
+      drying_status: drying,
+      width_mm: toMm(record.width_px, settings.pixelsPerMm),
+      height_mm: toMm(record.height_px, settings.pixelsPerMm),
+      ...decision,
+    });
+  }
+  return rows;
+}
+
+function generateChamberSeries(rand) {
+  const out = [];
+  let temp = 42, hum = 55;
+  for (let i = 0; i < 13; i++) {
+    temp += rand() * 2.4 - 0.3;
+    hum -= rand() * 1.8 - 0.2;
+    out.push({
+      t: `${String(8 + Math.floor(i / 2)).padStart(2, "0")}:${i % 2 === 0 ? "00" : "30"}`,
+      temp: +Math.min(62, Math.max(38, temp)).toFixed(1),
+      humidity: +Math.min(58, Math.max(30, hum)).toFixed(1),
+    });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* SMALL UI ATOMS                                                       */
+/* ------------------------------------------------------------------ */
+function Panel({ title, subtitle, right, children, style }) {
+  return (
+    <div
+      className="p-5"
+      style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, ...style }}
+    >
+      {(title || right) && (
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            {title && (
+              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: C.text, letterSpacing: 0.2 }}>
+                {title}
+              </div>
+            )}
+            {subtitle && <div style={{ color: C.textFaint, fontSize: 12.5, marginTop: 3 }}>{subtitle}</div>}
+          </div>
+          {right}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function StatusDot({ state }) {
+  const map = {
+    online: C.accept, active: C.accent, waiting: C.warn, offline: C.neutral,
+  };
+  return (
+    <span
+      style={{
+        display: "inline-block", width: 7, height: 7, borderRadius: 99,
+        background: map[state] || C.neutral,
+        boxShadow: state === "active" ? `0 0 0 3px ${C.accentSoft}` : "none",
+      }}
+    />
+  );
+}
+
+function GradeBadge({ grade, size = "md" }) {
+  const styles = {
+    "GRADE A": { bg: C.acceptSoft, border: C.acceptBorder, color: C.accept },
+    "GRADE C": { bg: C.warnSoft, border: C.warnBorder, color: C.warn },
+    REJECT: { bg: C.rejectSoft, border: C.rejectBorder, color: C.reject },
+    "MANUAL CHECK": { bg: C.neutralSoft, border: C.borderLight, color: C.textMuted },
+  };
+  const s = styles[grade] || styles["MANUAL CHECK"];
+  const pad = size === "lg" ? "10px 18px" : "4px 10px";
+  const fontSize = size === "lg" ? 15 : 11.5;
+  return (
+    <span
+      style={{
+        background: s.bg, border: `1px solid ${s.border}`, color: s.color,
+        borderRadius: 5, padding: pad, fontFamily: FONT_DISPLAY, fontWeight: 700,
+        fontSize, letterSpacing: 0.4, display: "inline-block",
+      }}
+    >
+      {grade}
+    </span>
+  );
+}
+
+function KpiCard({ icon: Icon, label, value, unit, accentColor }) {
+  return (
+    <div className="p-4 flex items-center gap-3" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6 }}>
+      <div className="flex items-center justify-center shrink-0" style={{ width: 38, height: 38, borderRadius: 6, background: accentColor ? `${accentColor}22` : C.panelAlt }}>
+        <Icon size={18} color={accentColor || C.textMuted} />
+      </div>
+      <div>
+        <div style={{ color: C.textFaint, fontSize: 11.5, marginBottom: 2 }}>{label}</div>
+        <div style={{ fontFamily: FONT_MONO, fontWeight: 600, fontSize: 19, color: C.text }}>
+          {value}
+          {unit && <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 4 }}>{unit}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DemoChip() {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-1"
+      style={{ background: C.warnSoft, border: `1px solid ${C.warnBorder}`, borderRadius: 5, color: C.warn, fontSize: 11.5, fontWeight: 600 }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 99, background: C.warn }} />
+      Demo Mode
+    </span>
+  );
+}
+
+function PipelineFlow({ stages }) {
+  return (
+    <div className="flex items-center overflow-x-auto pb-1" style={{ gap: 0 }}>
+      {stages.map((s, i) => (
+        <React.Fragment key={s.label}>
+          <div className="flex flex-col items-center shrink-0" style={{ minWidth: 92 }}>
+            <div
+              className="flex items-center justify-center mb-2"
+              style={{
+                width: 44, height: 44, borderRadius: 8,
+                background: s.status === "active" ? C.accentSoft : C.panelAlt,
+                border: `1px solid ${s.status === "active" ? C.accentBorder : C.border}`,
+              }}
+            >
+              <s.icon size={18} color={s.status === "offline" ? C.textFaint : s.status === "active" ? C.accent : C.textMuted} />
+            </div>
+            <div style={{ fontSize: 11, color: C.textMuted, textAlign: "center", lineHeight: 1.3 }}>{s.label}</div>
+            <div className="flex items-center gap-1 mt-1">
+              <StatusDot state={s.status} />
+              <span style={{ fontSize: 9.5, color: C.textFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>{s.status}</span>
+            </div>
+          </div>
+          {i < stages.length - 1 && (
+            <div style={{ flex: "0 0 20px", height: 1, background: C.border, marginBottom: 26 }} />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* NAVIGATION                                                           */
+/* ------------------------------------------------------------------ */
+const NAV = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "drying", label: "Drying Chamber", icon: Thermometer },
+  { id: "inspection", label: "Quality Inspection", icon: ScanEye },
+  { id: "batch", label: "Batch Analysis", icon: BarChart3 },
+  { id: "history", label: "Inspection History", icon: HistoryIcon },
+  { id: "status", label: "System Status", icon: Activity },
+  { id: "settings", label: "Settings", icon: SettingsIcon },
+];
+
+/* ------------------------------------------------------------------ */
+/* PAGE: DASHBOARD                                                      */
+/* ------------------------------------------------------------------ */
+function DashboardPage({ history, chamberSeries }) {
+  const counts = useMemo(() => {
+    const c = { "GRADE A": 0, "GRADE C": 0, REJECT: 0, "MANUAL CHECK": 0 };
+    history.forEach((h) => { c[h.grade] = (c[h.grade] || 0) + 1; });
+    return c;
+  }, [history]);
+
+  const pieData = [
+    { name: "Grade A", value: counts["GRADE A"], color: C.accept },
+    { name: "Grade C", value: counts["GRADE C"], color: C.warn },
+    { name: "Reject", value: counts["REJECT"], color: C.reject },
+    { name: "Manual", value: counts["MANUAL CHECK"], color: C.neutral },
+  ];
+
+  const stages = [
+    { label: "Solar", icon: Sun, status: "online" },
+    { label: "Battery", icon: BatteryMedium, status: "online" },
+    { label: "ESP32", icon: Cpu, status: "waiting" },
+    { label: "Drying Chamber", icon: Thermometer, status: "waiting" },
+    { label: "Camera", icon: CameraIcon, status: "active" },
+    { label: "YOLOv8", icon: ScanEye, status: "offline" },
+    { label: "OpenCV", icon: Gauge, status: "active" },
+    { label: "Decision Engine", icon: CheckCircle2, status: "active" },
+  ];
+
+  const latest = chamberSeries[chamberSeries.length - 1];
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>Smart Agarbatti Dashboard</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>Real-time drying and visual quality monitoring</div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard icon={Thermometer} label="Drying Status" value="Ready" accentColor={C.accept} />
+        <KpiCard icon={Thermometer} label="Chamber Temperature" value={latest.temp} unit="°C" accentColor={C.accent} />
+        <KpiCard icon={Droplets} label="Chamber Humidity" value={latest.humidity} unit="%" accentColor="#6E9BC4" />
+        <KpiCard icon={ScanEye} label="Today's Inspections" value={history.length} accentColor={C.textMuted} />
+      </div>
+
+      <Panel title="System Pipeline" subtitle="Solar → Drying → Camera Inspection — no conveyor in this build">
+        <PipelineFlow stages={stages} />
+      </Panel>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <Panel title="Quality Summary" subtitle="Today" style={{ gridColumn: "span 2 / span 2" }}>
+          <div style={{ height: 190 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={72} paddingAngle={3}>
+                  {pieData.map((d) => <Cell key={d.name} fill={d.color} stroke="none" />)}
+                </Pie>
+                <Tooltip contentStyle={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4, fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            {pieData.map((d) => (
+              <div key={d.name} className="flex items-center gap-2">
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
+                <span style={{ fontSize: 12, color: C.textMuted }}>{d.name}</span>
+                <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: C.text, marginLeft: "auto" }}>{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Recent Inspections" style={{ gridColumn: "span 3 / span 3" }}>
+          <div style={{ maxHeight: 250, overflowY: "auto" }}>
+            <table className="w-full" style={{ borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ color: C.textFaint, textAlign: "left" }}>
+                  <th className="pb-2 font-normal">Time</th>
+                  <th className="pb-2 font-normal">Class</th>
+                  <th className="pb-2 font-normal">Conf.</th>
+                  <th className="pb-2 font-normal">Grade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.slice(0, 8).map((r) => (
+                  <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                    <td className="py-2" style={{ fontFamily: FONT_MONO, color: C.textMuted }}>{r.time}</td>
+                    <td className="py-2" style={{ color: C.text }}>{r.class}</td>
+                    <td className="py-2" style={{ fontFamily: FONT_MONO, color: C.textMuted }}>{r.confidence}%</td>
+                    <td className="py-2"><GradeBadge grade={r.grade} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE: DRYING CHAMBER                                                 */
+/* ------------------------------------------------------------------ */
+function DryingChamberPage({ chamberSeries }) {
+  const latest = chamberSeries[chamberSeries.length - 1];
+  const stagesOfDrying = ["Heating", "Moisture Removal", "Stabilization", "Ready"];
+  const currentStageIdx = 3;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>Smart Drying Chamber</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>ESP32-monitored temperature and humidity control</div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <Panel title="Chamber Status" style={{ gridColumn: "span 2 / span 2" }}>
+          <div className="flex items-center gap-2 mb-4">
+            <GradeBadge grade="GRADE A" size="lg" />
+            <span style={{ color: C.textMuted, fontSize: 13 }}>Ready to inspect</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <KpiCard icon={Thermometer} label="Temperature" value={latest.temp} unit="°C" accentColor={C.accent} />
+            <KpiCard icon={Droplets} label="Humidity" value={latest.humidity} unit="%" accentColor="#6E9BC4" />
+            <KpiCard icon={Fan} label="Fan" value="ON" accentColor={C.accept} />
+            <KpiCard icon={Gauge} label="Progress" value={100} unit="%" accentColor={C.accept} />
+          </div>
+          <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 6 }}>Drying stage</div>
+          <div className="flex items-center gap-2">
+            {stagesOfDrying.map((s, i) => (
+              <React.Fragment key={s}>
+                <div
+                  className="px-3 py-1.5"
+                  style={{
+                    borderRadius: 5, fontSize: 12,
+                    background: i <= currentStageIdx ? C.accentSoft : C.panelAlt,
+                    border: `1px solid ${i <= currentStageIdx ? C.accentBorder : C.border}`,
+                    color: i <= currentStageIdx ? C.accent : C.textFaint,
+                  }}
+                >
+                  {s}
+                </div>
+                {i < stagesOfDrying.length - 1 && <ChevronRight size={14} color={C.textFaint} />}
+              </React.Fragment>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Power">
+          <div className="flex flex-col gap-3">
+            <KpiCard icon={Sun} label="Solar Panel" value={72} unit="W" accentColor={C.warn} />
+            <KpiCard icon={BatteryMedium} label="Battery" value={84} unit="%" accentColor={C.accept} />
+            <KpiCard icon={Cpu} label="ESP32" value="Demo" accentColor={C.textMuted} />
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Temperature & Humidity" subtitle="Last ~6 hours, simulated">
+        <div style={{ height: 220 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chamberSeries}>
+              <CartesianGrid stroke={C.border} vertical={false} />
+              <XAxis dataKey="t" tick={{ fill: C.textFaint, fontSize: 11 }} axisLine={{ stroke: C.border }} tickLine={false} />
+              <YAxis tick={{ fill: C.textFaint, fontSize: 11 }} axisLine={{ stroke: C.border }} tickLine={false} />
+              <Tooltip contentStyle={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="temp" name="Temp °C" stroke={C.accent} dot={false} strokeWidth={2} />
+              <Line type="monotone" dataKey="humidity" name="Humidity %" stroke="#6E9BC4" dot={false} strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Panel>
+
+      <div className="flex items-start gap-2 p-4" style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 6 }}>
+        <Info size={16} color={C.textFaint} className="shrink-0 mt-0.5" />
+        <div style={{ fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
+          Drying completion is determined from temperature and humidity readings received from the ESP32.
+          The camera performs visual quality inspection only — it does not measure internal moisture directly.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE: QUALITY INSPECTION                                             */
+/* ------------------------------------------------------------------ */
+function QualityInspectionPage({ settings, addToHistory }) {
+  const [imgSrc, setImgSrc] = useState(null);
+  const [box, setBox] = useState(null);
+  const [dryingStatus, setDryingStatus] = useState("READY_TO_INSPECT");
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const canvasRef = useRef(null);
+  const displayCanvasRef = useRef(null);
+  const randRef = useRef(mulberry32(7));
+
+  const handleUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setImgSrc(ev.target.result);
+      setResult(null);
+      setBox(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const runInspection = useCallback((forcedClass) => {
+    setRunning(true);
+    const finish = (cvFeatures) => {
+      const yoloResult = mockYoloClassify(randRef.current, forcedClass);
+      const record = buildRecord(cvFeatures, yoloResult, settings);
+      const decision = qualityDecision(record, dryingStatus, settings);
+      const checklist = explainChecklist(record, dryingStatus, decision);
+      const finalResult = { ...record, ...decision, checklist, drying_status: dryingStatus };
+      setResult(finalResult);
+      setBox(cvFeatures.box);
+      addToHistory(finalResult);
+      setRunning(false);
+    };
+
+    if (imgSrc) {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        const scale = Math.min(1, 500 / img.width);
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const cvFeatures = measureImage(canvas);
+        finish(cvFeatures);
+      };
+      img.src = imgSrc;
+    } else {
+      const r = randRef.current;
+      const cvFeatures = {
+        box: [40, 30, 40 + 70 + r() * 60, 30 + 300 + r() * 200],
+        width_px: Math.round(70 + r() * 60),
+        height_px: Math.round(300 + r() * 200),
+        aspect_ratio: +(4 + r() * 2).toFixed(2),
+        brightness: +(90 + r() * 60).toFixed(1),
+      };
+      setTimeout(() => finish(cvFeatures), 350);
+    }
+  }, [imgSrc, dryingStatus, settings, addToHistory]);
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>AI Quality Inspection</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>YOLOv8 defect detection + OpenCV measurement + rule-based grading</div>
+      </div>
+
+      <div className="p-3 flex items-start gap-2" style={{ background: C.warnSoft, border: `1px solid ${C.warnBorder}`, borderRadius: 6 }}>
+        <AlertTriangle size={16} color={C.warn} className="shrink-0 mt-0.5" />
+        <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.5 }}>
+          <strong>YOLOv8 model not loaded yet</strong> — no <code style={{ fontFamily: FONT_MONO }}>best.pt</code> has been trained.
+          Classification below is simulated for demo purposes. The width/height/brightness measurement and the final
+          grading logic <em>are</em> the real code from the notebook, running on whatever image you upload.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <Panel title="1. Input">
+          <div
+            className="flex items-center justify-center mb-3 relative overflow-hidden"
+            style={{ height: 260, background: C.panelAlt, border: `1px dashed ${C.border}`, borderRadius: 6 }}
+          >
+            {imgSrc ? (
+              <>
+                <img src={imgSrc} alt="Uploaded agarbatti" style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "contain" }} />
+                {box && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: `${(box[0] / (canvasRef.current?.width || 1)) * 100}%`,
+                      top: `${(box[1] / (canvasRef.current?.height || 1)) * 100}%`,
+                      width: `${((box[2] - box[0]) / (canvasRef.current?.width || 1)) * 100}%`,
+                      height: `${((box[3] - box[1]) / (canvasRef.current?.height || 1)) * 100}%`,
+                      border: `2px solid ${C.accent}`,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: "absolute", top: -20, left: 0, background: C.accent, color: "#1B1714",
+                        fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 3, fontFamily: FONT_MONO,
+                      }}
+                    >
+                      {result?.class} {result?.confidence}%
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-2" style={{ color: C.textFaint }}>
+                <Upload size={26} />
+                <div style={{ fontSize: 12.5 }}>Upload a photo, or run a scenario below</div>
+              </div>
+            )}
+          </div>
+          <canvas ref={canvasRef} style={{ display: "none" }} />
+
+          <div className="flex flex-wrap gap-2 mb-4">
+            <label
+              className="flex items-center gap-2 px-3 py-2 cursor-pointer"
+              style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 12.5, color: C.text }}
+            >
+              <Upload size={14} /> Upload image
+              <input type="file" accept="image/*" onChange={handleUpload} style={{ display: "none" }} />
+            </label>
+            <button
+              onClick={() => runInspection()}
+              disabled={running}
+              className="flex items-center gap-2 px-4 py-2"
+              style={{ background: C.accent, border: "none", borderRadius: 5, fontSize: 12.5, fontWeight: 600, color: "#1B1714", cursor: "pointer" }}
+            >
+              {running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+              Run Inspection
+            </button>
+          </div>
+
+          <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 6 }}>Demo scenarios</div>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {["Ready", "Broken", "Bent"].map((c) => (
+              <button
+                key={c}
+                onClick={() => runInspection(c)}
+                className="px-3 py-1.5"
+                style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 12, color: C.textMuted, cursor: "pointer" }}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 6 }}>Drying status (from ESP32)</div>
+          <select
+            value={dryingStatus}
+            onChange={(e) => setDryingStatus(e.target.value)}
+            className="px-3 py-2 w-full"
+            style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 12.5, color: C.text }}
+          >
+            <option value="READY_TO_INSPECT">READY_TO_INSPECT</option>
+            <option value="UNDER_DRYING">UNDER_DRYING</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+          </select>
+        </Panel>
+
+        <Panel title="2. Result">
+          {!result ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2" style={{ color: C.textFaint, minHeight: 300 }}>
+              <ScanEye size={26} />
+              <div style={{ fontSize: 12.5 }}>Run an inspection to see the AI prediction and grade</div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div style={{ fontSize: 11.5, color: C.textFaint }}>YOLOv8 Detection</div>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 17, color: C.text }}>{result.class}</div>
+                  <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: C.textMuted }}>{result.confidence}% confidence</div>
+                </div>
+                <GradeBadge grade={result.grade} size="lg" />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6 }}>OpenCV Measurements</div>
+                <div className="grid grid-cols-2 gap-2" style={{ fontFamily: FONT_MONO, fontSize: 12.5 }}>
+                  <MeasureRow label="Width" value={result.width_mm != null ? `${result.width_mm} mm` : `${result.width_px} px`} />
+                  <MeasureRow label="Length" value={result.height_mm != null ? `${result.height_mm} mm` : `${result.height_px} px`} />
+                  <MeasureRow label="Aspect ratio" value={result.aspect_ratio} />
+                  <MeasureRow label="Brightness" value={result.brightness} />
+                </div>
+                {result.width_mm == null && (
+                  <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>
+                    No pixel-to-mm calibration set — showing raw pixels. Set it in Settings.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 6 }}>Why this decision?</div>
+                <div className="flex flex-col gap-1.5">
+                  {result.checklist.map((c) => (
+                    <div key={c.label} className="flex items-center gap-2" style={{ fontSize: 12.5, color: c.pass ? C.text : C.textMuted }}>
+                      {c.pass ? <CheckCircle2 size={14} color={C.accept} /> : <XCircle size={14} color={C.reject} />}
+                      {c.label}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 p-3" style={{ background: C.panelAlt, borderRadius: 5, fontSize: 12.5, color: C.textMuted }}>
+                  {result.reason}
+                </div>
+              </div>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="Model integration" subtitle="What changes once best.pt is trained">
+        <div style={{ fontSize: 12.5, color: C.textMuted, lineHeight: 1.6 }}>
+          Every result above already matches the exact shape your backend will return. Once{" "}
+          <code style={{ fontFamily: FONT_MONO, color: C.text }}>best.pt</code> is trained, replace the mock classification
+          call with a real request to your inspection endpoint — the measurement math, decision engine, history, and this
+          entire UI stay exactly as they are.
+        </div>
+        <pre
+          className="mt-3 p-3 overflow-x-auto"
+          style={{ background: C.bgRaised, border: `1px solid ${C.border}`, borderRadius: 5, fontFamily: FONT_MONO, fontSize: 11.5, color: C.textMuted, lineHeight: 1.6 }}
+        >{`POST /api/inspect
+{
+  "prediction": "Ready",
+  "confidence": 0.94,
+  "width_px": 78,
+  "height_px": 410,
+  "brightness": 118,
+  "drying_status": "READY_TO_INSPECT",
+  "grade": "GRADE A",
+  "action": "ACCEPT",
+  "reason": "All quality checks passed"
+}`}</pre>
+      </Panel>
+    </div>
+  );
+}
+
+function MeasureRow({ label, value }) {
+  return (
+    <div className="flex items-center justify-between px-3 py-2" style={{ background: C.panelAlt, borderRadius: 5 }}>
+      <span style={{ fontFamily: FONT_BODY, fontSize: 12, color: C.textFaint }}>{label}</span>
+      <span style={{ color: C.text }}>{value}</span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE: BATCH ANALYSIS                                                 */
+/* ------------------------------------------------------------------ */
+function BatchAnalysisPage({ history }) {
+  const total = history.length;
+  const gradeA = history.filter((h) => h.grade === "GRADE A").length;
+  const gradeC = history.filter((h) => h.grade === "GRADE C").length;
+  const reject = history.filter((h) => h.grade === "REJECT").length;
+  const broken = history.filter((h) => h.class === "Broken").length;
+  const bent = history.filter((h) => h.class === "Bent").length;
+
+  const defectData = [
+    { name: "Broken", value: broken, fill: C.reject },
+    { name: "Bent", value: bent, fill: C.warn },
+  ];
+  const avgConfidence = total ? (history.reduce((s, h) => s + h.confidence, 0) / total).toFixed(1) : 0;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>Batch Analysis</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>Batch BATCH-2026-001</div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <KpiCard icon={ScanEye} label="Total Inspected" value={total} accentColor={C.textMuted} />
+        <KpiCard icon={CheckCircle2} label="Grade A" value={gradeA} accentColor={C.accept} />
+        <KpiCard icon={AlertTriangle} label="Grade C" value={gradeC} accentColor={C.warn} />
+        <KpiCard icon={XCircle} label="Rejected" value={reject} accentColor={C.reject} />
+        <KpiCard icon={Gauge} label="Avg. Confidence" value={avgConfidence} unit="%" accentColor={C.textMuted} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <Panel title="Defect Distribution">
+          <div style={{ height: 220 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={defectData}>
+                <CartesianGrid stroke={C.border} vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: C.textFaint, fontSize: 12 }} axisLine={{ stroke: C.border }} tickLine={false} />
+                <YAxis tick={{ fill: C.textFaint, fontSize: 11 }} axisLine={{ stroke: C.border }} tickLine={false} />
+                <Tooltip contentStyle={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4, fontSize: 12 }} />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                  {defectData.map((d) => <Cell key={d.name} fill={d.fill} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+
+        <Panel title="Acceptance vs Rejection">
+          <div className="flex flex-col gap-4 justify-center h-full">
+            <RateBar label="Acceptance Rate" value={total ? Math.round((gradeA / total) * 100) : 0} color={C.accept} />
+            <RateBar label="Downgrade Rate" value={total ? Math.round((gradeC / total) * 100) : 0} color={C.warn} />
+            <RateBar label="Rejection Rate" value={total ? Math.round((reject / total) * 100) : 0} color={C.reject} />
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function RateBar({ label, value, color }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5" style={{ fontSize: 12.5 }}>
+        <span style={{ color: C.textMuted }}>{label}</span>
+        <span style={{ fontFamily: FONT_MONO, color: C.text }}>{value}%</span>
+      </div>
+      <div style={{ height: 8, background: C.panelAlt, borderRadius: 99, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${value}%`, background: color, borderRadius: 99 }} />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE: HISTORY                                                        */
+/* ------------------------------------------------------------------ */
+function HistoryPage({ history }) {
+  const [gradeFilter, setGradeFilter] = useState("All");
+  const [classFilter, setClassFilter] = useState("All");
+  const [selected, setSelected] = useState(null);
+
+  const filtered = history.filter(
+    (h) => (gradeFilter === "All" || h.grade === gradeFilter) && (classFilter === "All" || h.class === classFilter)
+  );
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>Inspection History</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>{filtered.length} of {history.length} records</div>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <SelectFilter label="Grade" value={gradeFilter} onChange={setGradeFilter} options={["All", "GRADE A", "GRADE C", "REJECT", "MANUAL CHECK"]} />
+        <SelectFilter label="Prediction" value={classFilter} onChange={setClassFilter} options={["All", "Ready", "Broken", "Bent"]} />
+      </div>
+
+      <Panel>
+        <div style={{ overflowX: "auto" }}>
+          <table className="w-full" style={{ borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ color: C.textFaint, textAlign: "left" }}>
+                {["ID", "Time", "Class", "Conf.", "Width", "Length", "Drying", "Grade"].map((h) => (
+                  <th key={h} className="pb-2 pr-4 font-normal">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr
+                  key={r.id}
+                  onClick={() => setSelected(r)}
+                  style={{ borderTop: `1px solid ${C.border}`, cursor: "pointer" }}
+                >
+                  <td className="py-2 pr-4" style={{ fontFamily: FONT_MONO, color: C.textFaint }}>{r.id}</td>
+                  <td className="py-2 pr-4" style={{ fontFamily: FONT_MONO, color: C.textMuted }}>{r.time}</td>
+                  <td className="py-2 pr-4" style={{ color: C.text }}>{r.class}</td>
+                  <td className="py-2 pr-4" style={{ fontFamily: FONT_MONO, color: C.textMuted }}>{r.confidence}%</td>
+                  <td className="py-2 pr-4" style={{ fontFamily: FONT_MONO, color: C.textMuted }}>{r.width_px}px</td>
+                  <td className="py-2 pr-4" style={{ fontFamily: FONT_MONO, color: C.textMuted }}>{r.height_px}px</td>
+                  <td className="py-2 pr-4" style={{ color: C.textFaint, fontSize: 11.5 }}>{r.drying_status}</td>
+                  <td className="py-2 pr-4"><GradeBadge grade={r.grade} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      {selected && (
+        <Panel title={`Inspection ${selected.id}`} right={
+          <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: C.textFaint, cursor: "pointer", fontSize: 12 }}>Close</button>
+        }>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <MeasureRow label="Class" value={selected.class} />
+            <MeasureRow label="Confidence" value={`${selected.confidence}%`} />
+            <MeasureRow label="Width" value={`${selected.width_px}px`} />
+            <MeasureRow label="Length" value={`${selected.height_px}px`} />
+            <MeasureRow label="Brightness" value={selected.brightness} />
+            <MeasureRow label="Drying" value={selected.drying_status} />
+            <MeasureRow label="Action" value={selected.action} />
+            <MeasureRow label="Grade" value={selected.grade} />
+          </div>
+          <div className="p-3" style={{ background: C.panelAlt, borderRadius: 5, fontSize: 12.5, color: C.textMuted }}>{selected.reason}</div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function SelectFilter({ label, value, onChange, options }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span style={{ fontSize: 12, color: C.textFaint }}>{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="px-3 py-1.5"
+        style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 12.5, color: C.text }}
+      >
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE: SYSTEM STATUS                                                  */
+/* ------------------------------------------------------------------ */
+function SystemStatusPage() {
+  const items = [
+    { label: "Solar Panel", status: "DEMO", state: "waiting", icon: Sun },
+    { label: "Battery", status: "DEMO", state: "waiting", icon: BatteryMedium },
+    { label: "ESP32", status: "NOT CONNECTED", state: "offline", icon: Cpu },
+    { label: "Temperature Sensor", status: "NOT CONNECTED", state: "offline", icon: Thermometer },
+    { label: "Humidity Sensor", status: "NOT CONNECTED", state: "offline", icon: Droplets },
+    { label: "Camera", status: "AVAILABLE", state: "online", icon: CameraIcon },
+    { label: "YOLOv8 Model", status: "NOT LOADED", state: "offline", icon: ScanEye },
+    { label: "OpenCV", status: "READY", state: "online", icon: Gauge },
+    { label: "Decision Engine", status: "READY", state: "online", icon: CheckCircle2 },
+  ];
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>System Status</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>Connection status of every component — nothing here is faked as live</div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {items.map((it) => (
+          <div key={it.label} className="p-4 flex items-center gap-3" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6 }}>
+            <div className="flex items-center justify-center shrink-0" style={{ width: 38, height: 38, borderRadius: 6, background: C.panelAlt }}>
+              <it.icon size={17} color={C.textMuted} />
+            </div>
+            <div>
+              <div style={{ fontSize: 12.5, color: C.text }}>{it.label}</div>
+              <div className="flex items-center gap-1.5 mt-1">
+                <StatusDot state={it.state} />
+                <span style={{ fontSize: 11, color: C.textFaint }}>{it.status}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE: SETTINGS                                                       */
+/* ------------------------------------------------------------------ */
+function SettingsPage({ settings, setSettings }) {
+  const update = (key, value) => setSettings((s) => ({ ...s, [key]: value }));
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 22, color: C.text }}>Settings</div>
+        <div style={{ color: C.textMuted, fontSize: 13.5, marginTop: 2 }}>These feed directly into the decision engine on the Inspection page</div>
+      </div>
+
+      <Panel title="AI Settings">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <NumberField label="YOLO confidence threshold (%)" value={settings.minConfidence} onChange={(v) => update("minConfidence", v)} />
+          <TextRow label="Model path" value="agarbatti_runs/quality_grading/weights/best.pt" note="Not found — train the model first" />
+        </div>
+      </Panel>
+
+      <Panel title="Measurement Settings" subtitle="Pixel ranges, until real mm calibration is set">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <NumberField label="Width min (px)" value={settings.minWidthPx} onChange={(v) => update("minWidthPx", v)} />
+          <NumberField label="Width max (px)" value={settings.maxWidthPx} onChange={(v) => update("maxWidthPx", v)} />
+          <NumberField label="Length min (px)" value={settings.minHeightPx} onChange={(v) => update("minHeightPx", v)} />
+          <NumberField label="Length max (px)" value={settings.maxHeightPx} onChange={(v) => update("maxHeightPx", v)} />
+          <NumberField label="Brightness min" value={settings.minBrightness} onChange={(v) => update("minBrightness", v)} />
+          <NumberField label="Brightness max" value={settings.maxBrightness} onChange={(v) => update("maxBrightness", v)} />
+        </div>
+      </Panel>
+
+      <Panel title="Camera Calibration">
+        <NumberField
+          label="Pixels per mm"
+          value={settings.pixelsPerMm ?? ""}
+          onChange={(v) => update("pixelsPerMm", v === "" ? null : v)}
+          note={settings.pixelsPerMm ? null : "Not calibrated — measurements show raw pixels"}
+        />
+      </Panel>
+
+      <Panel title="Drying Settings">
+        <div className="grid grid-cols-2 gap-4">
+          <NumberField label="Temperature threshold (°C)" value={settings.tempThreshold} onChange={(v) => update("tempThreshold", v)} />
+          <NumberField label="Humidity threshold (%)" value={settings.humidityThreshold} onChange={(v) => update("humidityThreshold", v)} />
+        </div>
+      </Panel>
+
+      <div className="flex items-start gap-2 p-4" style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 6 }}>
+        <Info size={16} color={C.textFaint} className="shrink-0 mt-0.5" />
+        <div style={{ fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
+          These thresholds are engineering placeholders. Calibrate them against real measured Ready/Broken/Bent samples once your dataset exists.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NumberField({ label, value, onChange, note }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 6 }}>{label}</div>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value === "" ? "" : +e.target.value)}
+        className="px-3 py-2 w-full"
+        style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 12.5, color: C.text, fontFamily: FONT_MONO }}
+      />
+      {note && <div style={{ fontSize: 11, color: C.warn, marginTop: 4 }}>{note}</div>}
+    </div>
+  );
+}
+
+function TextRow({ label, value, note }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 6 }}>{label}</div>
+      <div className="px-3 py-2" style={{ background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 12, color: C.textMuted, fontFamily: FONT_MONO }}>
+        {value}
+      </div>
+      {note && <div style={{ fontSize: 11, color: C.warn, marginTop: 4 }}>{note}</div>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* ROOT APP                                                             */
+/* ------------------------------------------------------------------ */
+export default function SmartAgarbattiApp() {
+  const [page, setPage] = useState("dashboard");
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const randRef = useRef(mulberry32(42));
+  const [history, setHistory] = useState(() => generateHistory(randRef.current, DEFAULT_SETTINGS));
+  const chamberSeries = useMemo(() => generateChamberSeries(mulberry32(11)), []);
+
+  const addToHistory = useCallback((finalResult) => {
+    setHistory((h) => [
+      {
+        id: `INS-${1000 + h.length}`,
+        time: new Date().toTimeString().slice(0, 5),
+        ...finalResult,
+      },
+      ...h,
+    ]);
+  }, []);
+
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: FONT_BODY, color: C.text }}>
+      <FontLoader />
+      <div className="flex" style={{ minHeight: "100vh" }}>
+        <aside style={{ width: 220, background: C.bgRaised, borderRight: `1px solid ${C.border}` }} className="shrink-0 flex flex-col p-4">
+          <div className="mb-6 px-1">
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 16, color: C.text }}>Smart Agarbatti</div>
+            <div style={{ fontSize: 10.5, color: C.textFaint, marginTop: 2 }}>Solar Drying &amp; AI Quality Inspection</div>
+          </div>
+          <nav className="flex flex-col gap-1">
+            {NAV.map((n) => {
+              const active = page === n.id;
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => setPage(n.id)}
+                  className="flex items-center gap-2.5 px-3 py-2 text-left"
+                  style={{
+                    background: active ? C.accentSoft : "transparent",
+                    borderLeft: `2px solid ${active ? C.accent : "transparent"}`,
+                    borderRadius: 4, fontSize: 13, color: active ? C.text : C.textMuted,
+                    cursor: "pointer", border: "none",
+                  }}
+                >
+                  <n.icon size={16} color={active ? C.accent : C.textFaint} />
+                  {n.label}
+                </button>
+              );
+            })}
+          </nav>
+          <div className="mt-auto pt-4">
+            <DemoChip />
+          </div>
+        </aside>
+
+        <main className="flex-1 p-6" style={{ maxWidth: 1180 }}>
+          {page === "dashboard" && <DashboardPage history={history} chamberSeries={chamberSeries} />}
+          {page === "drying" && <DryingChamberPage chamberSeries={chamberSeries} />}
+          {page === "inspection" && <QualityInspectionPage settings={settings} addToHistory={addToHistory} />}
+          {page === "batch" && <BatchAnalysisPage history={history} />}
+          {page === "history" && <HistoryPage history={history} />}
+          {page === "status" && <SystemStatusPage />}
+          {page === "settings" && <SettingsPage settings={settings} setSettings={setSettings} />}
+        </main>
+      </div>
+    </div>
+  );
+}

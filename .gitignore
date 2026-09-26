@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Ultralytics / datasets / models
+agarbatti_runs/
+runs/
+*.pt
+Agarbatti_Dataset/
+*.jpg
+*.jpeg
+*.png
+!assets/*.png
+
+# Arduino
+*.hex
+*.elf
+build/
+
+# OS
+.DS_Store
+Thumbs.db
