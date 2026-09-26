@@ -238,26 +238,6 @@ The page is an ESP32 control-logic simulation with a 3D chamber view — it demo
 | ERROR above 60°C | Same cutoff in firmware |
 
 ---
+the Smart Solar Agarbatti Drying Chamber brings together clean energy, embedded control and applied AI into a single practical solution for small-scale manufacturers. By combining solar-powered staged drying with ESP32-based monitoring and YOLOv8-assisted quality grading, the system reduces dependence on open sun drying, brings consistency to the final product and gives manufacturers a clear batch-wise record of quality. The working simulation, inspection dashboard and hardware prototype together demonstrate a complete drying-to-grading workflow that is low-cost, scalable and suited for real deployment
 
-## Judge Demo (5 min)
 
-1. Simulation link → START → full stage cycle to READY.
-2. Dashboard link → upload Ready, Broken and Bent photos → grades with reasons and batch summary.
-3. Notebook in Colab → Run All → result table, detection plot, batch summary.
-4. Hardware: ESP32 with chamber (or photos/video) plus firmware serial log.
-
-## Calibration Notes
-
-- Train the classifier on the project dataset (`best.pt`) with a held-out test set before the final demo.
-- Fix camera position and lighting; report pixels until ruler/ArUco calibration is done, then enable mm.
-- Set width, length and brightness limits from measured good samples.
-- Size the solar input and battery for the demo runtime given the heater load.
-- Full checklist: notebook Section 21.
-
-## Team — SIH 2026
-
-- Presentation template: `docs/SIH2026-IDEA-Presentation-Format.pdf`
-
-## License
-
-MIT — see `LICENSE`.
