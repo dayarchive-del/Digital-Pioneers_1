@@ -1,217 +1,158 @@
-# 🪔 Smart Solar Agarbatti Drying Chamber — Digital-Pioneers_1
+# Smart Solar Agarbatti Drying Chamber — Digital Pioneers
+**Smart India Hackathon 2026 | ESP32 Smart Drying + YOLOv8 + OpenCV Quality Grading**
 
-> **SIH 2026 Prototype | ESP32 Smart Drying + YOLOv8 + OpenCV + Rule-Based Grading**
->
-> “Our system uses ESP32-based smart drying, manual placement under a camera for inspection, YOLOv8 for visual defect detection, OpenCV for measurable quality features, and a rule-based decision engine to produce an explainable final grade.”
+> Solar-powered drying chamber for agarbatti manufacturers with staged ESP32 process control and vision-based grading (Ready / Broken / Bent → Grade A / Grade C / Reject).
 
-[![SIH 2026](https://img.shields.io/badge/SIH-2026-orange)]()
-[![ESP32](https://img.shields.io/badge/ESP32-Arduino-blue)]()
-[![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-green)]()
-[![OpenCV](https://img.shields.io/badge/OpenCV-Measurement-red)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)]()
+## Live Demo
 
----
+- 3D Working Model Simulation: https://dayarchive-del.github.io/Digital-Pioneers_1/simulation/working-model.html
+- Inspection Dashboard: https://dayarchive-del.github.io/Digital-Pioneers_1/dashboard/smart-agarbatti-dashboard.html
 
-## 📌 Problem
+No install needed — both run directly in the browser (internet required for CDN libraries). Press START in the simulation to run the full drying cycle.
 
-Traditional agarbatti (incense stick) sun-drying is:
-- Weather-dependent & unhygienic (dust, insects, rain)
-- Uneven drying → breakage, bending, fungus, poor burning
-- No objective quality grading — fully manual visual check
-- High wastage for small / rural manufacturers
+## Problem
 
-## 💡 Solution
+Traditional agarbatti sun drying is weather dependent and unhygienic. Uneven drying causes breakage, bending and poor burning, and grading is done manually without any objective record. Small and rural units need a low-cost alternative that works off-grid.
 
-A **solar-powered smart drying chamber + AI quality inspection**:
+## Solution
 
-```text
-              SOLAR PANEL
-                   ↓
-                BATTERY
-                   ↓
-                 ESP32
-              ↙          ↘
-    TEMP/HUMIDITY       FAN / HEATER / LED / BUZZER
-              ↓              ↓
-          DRYING CHAMBER
-                   ↓
-                CAMERA
-         (manual placement, no conveyor)
-                   ↓
-            ORIGINAL IMAGE
-                   ↓
-              YOLOv8
-       Ready / Broken / Bent
-                   ↓
-          YOLO bounding boxes
-                   ↓
-               OpenCV
-    width / length / colour / brightness
-                   ↓
-           FEATURE RECORD
-                   +
-           ESP32 DRYING STATUS
-                   ↓
-        RULE-BASED DECISION ENGINE
-                   ↓
-    ┌─────────────┼─────────────┐
-    ↓             ↓             ↓
- GRADE A       GRADE C        REJECT
- ACCEPT      KEEP/CHECK      REMOVE
+A single workflow covering drying and grading:
+
+```
+Solar Panel → Battery → ESP32 → Drying Chamber → Camera
+                              (DHT22 temp/RH feedback)
+Camera Image → YOLOv8 (Ready/Broken/Bent) → OpenCV measurements
+  + ESP32 Drying Status → Decision Engine → Grade A / Grade C / Reject
 ```
 
-**How the parts fit together:**
-- YOLO = visual recognition only (`Ready`, `Broken`, `Bent`)
-- OpenCV = deterministic measurements (pixels, aspect-ratio, brightness)
-- ESP32 temp/RH = drying status (`READY_TO_INSPECT` / `UNDER_DRYING` / `UNKNOWN`)
-- Decision engine = plain Python rules, **not a second AI model**
-- Camera does **NOT** directly measure internal moisture
-- Report mm only after calibration, else report pixels
+Role split: YOLO handles visual recognition only. OpenCV handles deterministic measurement (size, colour, brightness) on the detected region. The ESP32 temperature/humidity logic supplies drying status. A rule-based engine combines the three into a final grade with reason and action. The camera does not measure internal moisture; under-drying is reported by the sensors, not by vision.
 
----
+## Repo Structure
 
-## 📁 Repo Structure
-
-```text
+```
 Digital-Pioneers_1/
+├── index.html                  ← landing page for GitHub Pages
 ├── README.md
 ├── requirements.txt
 ├── LICENSE
 ├── .gitignore
-│
 ├── ai-pipeline/
-│   ├── Smart_Agarbatti_FINAL_Project_Pipeline_no_conveyor.ipynb  ← MAIN notebook
-│   └── Smart_Agarbatti_NoComments_Pipeline.ipynb                 ← clean demo version
-│
+│   ├── Smart_Agarbatti_FINAL_Project_Pipeline_no_conveyor.ipynb
+│   └── Smart_Agarbatti_NoComments_Pipeline.ipynb
 ├── dashboard/
-│   ├── smart-agarbatti-dashboard.html  ← double-click to open, needs internet (CDN)
-│   └── smart-agarbatti-dashboard.jsx   ← React source
-│
+│   ├── smart-agarbatti-dashboard.html
+│   └── smart-agarbatti-dashboard.jsx
 ├── simulation/
-│   └── Smart-Solar-Agarbatti-Drying-Chamber-Working-Model.html ← 3D + ESP32 logic sim
-│
+│   └── working-model.html      ← the 3D working-model simulation
 ├── firmware/
-│   └── smart_drying_chamber.ino   ← ESP32 Arduino sketch (mirrors simulation)
-│
+│   └── smart_drying_chamber.ino
 ├── docs/
 │   └── SIH2026-IDEA-Presentation-Format.pdf
-│
 └── assets/
-    └── screenshot.png
 ```
 
 ---
 
 # PART A — HARDWARE
 
-This is the physical prototype: solar power + ESP32 sensing + controlled drying chamber.
+Physical prototype: solar power, ESP32 sensing and a controlled drying chamber.
 
 ## A.1 Block Diagram
 
-```text
-SOLAR PANEL (10-20 W, charging demo)
-   ↓
-BATTERY (sized for demo runtime)
-   ↓
+```
+Solar Panel (10–20 W, charging demo)
+  ↓
+Battery
+  ↓
 ESP32
- ├── INPUT: DHT22 Temp/RH (GPIO 4), START(32) / STOP(33) / RESET(23) buttons
- ├── DISPLAY: OLED SSD1306 (SDA 21 / SCL 22)
- └── OUTPUT: Heater relay (25), Circulation fan (26), Exhaust fan (27),
-             LEDs R(16)/Y(17)/G(18), Buzzer (19)
-   ↓
-DRYING CHAMBER (insulated box + heater + fans + sliding trolleys)
-   ↓
-MANUAL PLACEMENT UNDER CAMERA (no conveyor)
+ ├── Input: DHT22 Temp/RH (GPIO 4), START (32) / STOP (33) / RESET (23)
+ ├── Display: OLED SSD1306 (SDA 21 / SCL 22)
+ └── Output: Heater relay (25), Circulation fan (26), Exhaust fan (27),
+             LEDs R (16) / Y (17) / G (18), Buzzer (19)
+  ↓
+Drying Chamber (insulated box, heater, fans, sliding trolleys)
+  ↓
+Manual placement under camera (no conveyor)
 ```
 
-## A.2 Components (BOM)
+## A.2 Components
 
-| Part | Notes |
+| Part | Detail |
 |---|---|
-| ESP32 DevKit | main controller, see `firmware/smart_drying_chamber.ino` |
-| DHT22 | temp + humidity, GPIO 4 |
-| OLED 128x64 SSD1306 | SDA 21 / SCL 22, shows T/RH + state + `DRYING_STATUS` |
+| ESP32 DevKit | Main controller (`firmware/smart_drying_chamber.ino`) |
+| DHT22 | Temperature + humidity, GPIO 4 |
+| OLED 128x64 SSD1306 | SDA 21 / SCL 22, shows T/RH, stage, drying status |
 | Heater + relay module | GPIO 25, opto-isolated, fused |
-| Circulation fan | GPIO 26, always ON during heating stages |
-| Exhaust fan | GPIO 27, ON when RH high / stages 2-3 / cooling |
-| LEDs R/Y/G | GPIO 16/17/18, red=ERROR, yellow=drying, green=READY |
+| Circulation fan | GPIO 26, on during heating stages |
+| Exhaust fan | GPIO 27, on when RH is high and in stages 2–3 / cooling |
+| LEDs R/Y/G | GPIO 16/17/18 — red ERROR, yellow drying, green READY |
 | Buzzer | GPIO 19, beeps on READY |
 | Push buttons | START 32, STOP 33, RESET 23 (INPUT_PULLUP) |
-| Solar panel 10-20 W + charge controller + battery | charging demo only — cannot continuously run heater |
-| Chamber box + trays/trolleys | sliding trolleys, auto-eject message on READY |
-| Camera (USB / phone) | fixed stand, plain contrasting background |
+| Solar panel + charge controller + battery | 10–20 W panel is a charging demo; it cannot continuously run a heater load of this size |
+| Chamber box + trays/trolleys | Sliding trolleys for loading and unloading |
+| Camera (USB / phone) | Fixed stand, plain contrasting background |
 
-## A.3 Control Logic (state machine)
+## A.3 Control Logic
 
-`IDLE → STAGE1 (≥45°C) → STAGE2 (≥50°C) → STAGE3 (≥52°C AND RH≤35%) → COOLING (≤30°C) → READY`, plus `ERROR` if `>60°C`. Hysteresis `±1°C`.
+`IDLE → STAGE1 (≥45°C) → STAGE2 (≥50°C) → STAGE3 (≥52°C and RH ≤ 35%) → COOLING (≤30°C) → READY`, plus `ERROR` above 60°C. Hysteresis ±1°C.
 
-| State | Heater | Circ | Exhaust | LED |
+| State | Heater | Circ. fan | Exhaust | LED |
 |---|---|---|---|---|
 | IDLE | OFF | OFF | OFF | OFF |
-| STAGE1 | ON | ON | ON if RH>60% | Yellow |
+| STAGE1 | ON | ON | ON if RH > 60% | Yellow |
 | STAGE2 | ON | ON | ON | Yellow |
 | STAGE3 | ON | ON | ON | Yellow |
 | COOLING | OFF | ON | ON | Yellow |
 | READY | OFF | OFF | OFF | Green + beep |
 | ERROR | OFF | ON | ON | Red + buzzer |
 
-Firmware: `firmware/smart_drying_chamber.ino`. Upload via Arduino IDE (ESP32 core + `DHT sensor` + `Adafruit SSD1306` + `Adafruit GFX` libs). Serial @115200 prints `T, RH, state, dry=` every 2 s where `dry` is `READY_TO_INSPECT` (READY) / `UNDER_DRYING` (stages) / `UNKNOWN` (ERROR) — this string is the input to the Software pipeline.
+Upload via Arduino IDE with ESP32 board support plus the DHT sensor, Adafruit SSD1306 and Adafruit GFX libraries. Serial at 115200 prints temperature, humidity, stage and drying status (`READY_TO_INSPECT` / `UNDER_DRYING` / `UNKNOWN`) every 2 seconds — this status string feeds the software pipeline.
 
-## A.4 Hardware Safety / Limits
+## A.4 Safety
 
-- Relay isolation + fuse + ventilation mandatory. Test over-temp cutoff (>60°C → ERROR) before demo.
-- Solar sizing not validated for continuous heater load — report battery voltage + runtime honestly.
-- Simulation ≠ thermodynamics (see Part C).
+Relay isolation, fuse and ventilation are mandatory. Verify the over-temperature cutoff (>60°C → ERROR) before any demo with the heater connected.
 
 ---
 
 # PART B — SOFTWARE
 
-This is the AI inspection: camera image → YOLOv8 → OpenCV → rule-based grade.
+AI inspection: camera image → YOLOv8 → OpenCV → rule-based grade.
 
-## B.1 Pipeline Overview
+## B.1 Pipeline
 
-```text
-CAMERA IMAGE (manual placement)
-   ↓
-YOLOv8 — visual recognition only
- Detects: Ready / Broken / Bent (+ box + confidence)
-   ↓
-OpenCV on each YOLO ROI — deterministic measurement only
- Measures: width_px / height_px / aspect_ratio / colour (BGR/HSV) / brightness
-   ↓
-ESP32 DRYING_STATUS (from Part A serial/Wi-Fi)
- READY_TO_INSPECT / UNDER_DRYING / UNKNOWN
-   ↓
-RULE-BASED DECISION ENGINE (plain Python, NOT a second AI model)
-   ↓
-GRADE A (ACCEPT) / GRADE C (KEEP DRYING / DOWNGRADE) / REJECT (REMOVE) / MANUAL CHECK
+```
+Camera image (manual placement)
+  ↓
+YOLOv8 — Ready / Broken / Bent (+ box + confidence)
+  ↓
+OpenCV on each YOLO region — width/height, aspect ratio, colour (BGR/HSV), brightness
+  ↓
+ESP32 drying status (serial/Wi-Fi from Part A)
+  ↓
+Rule-based decision engine (plain Python rules)
+  ↓
+GRADE A (accept) / GRADE C (keep drying or downgrade) / REJECT (remove) / MANUAL CHECK
 ```
 
-Notes:
-- YOLO ≠ moisture meter. Under-dried is NOT a camera class — it comes from ESP32 temp/RH.
-- OpenCV keeps original resolution (no 640x640 resize before measuring).
-- Report mm only after calibration, else pixels.
+Measurement discipline followed throughout: OpenCV works on the original resolution, not a resized copy; millimetre values are reported only after camera calibration with a known reference (`PIXELS_PER_MM`), otherwise pixels.
 
 ## B.2 AI Notebook
 
-File: `ai-pipeline/Smart_Agarbatti_FINAL_Project_Pipeline_no_conveyor.ipynb` (main) + `Smart_Agarbatti_NoComments_Pipeline.ipynb` (clean demo).
+`ai-pipeline/Smart_Agarbatti_FINAL_Project_Pipeline_no_conveyor.ipynb` is the main pipeline; `Smart_Agarbatti_NoComments_Pipeline.ipynb` is the clean demo copy.
 
-Setup:
-```bash
-pip install -r requirements.txt
-# ultralytics opencv-python matplotlib pandas pyyaml numpy
+Setup: `pip install -r requirements.txt` (ultralytics, opencv-python, matplotlib, pandas, pyyaml, numpy).
+
+Dataset with exact class order `0 = Ready, 1 = Broken, 2 = Bent`:
+
 ```
-
-Dataset (exact IDs required):
-```text
 Agarbatti_Dataset/
 ├── train/images/ + train/labels/
 ├── val/images/ + val/labels/
-└── data.yaml   # 0=Ready, 1=Broken, 2=Bent
+└── data.yaml
 ```
 
-Train:
+Training (YOLOv8n starting point):
+
 ```python
 from ultralytics import YOLO
 model = YOLO("yolov8n.pt")
@@ -220,7 +161,8 @@ model.train(data="data.yaml", epochs=50, imgsz=640, batch=8,
 # → agarbatti_runs/quality_grading/weights/best.pt
 ```
 
-Run:
+Inspection run:
+
 ```python
 MODEL_PATH = "agarbatti_runs/quality_grading/weights/best.pt"
 IMAGE_PATH = "agarbatti_image.jpg"
@@ -228,9 +170,9 @@ DRYING_STATUS = "READY_TO_INSPECT"  # or UNDER_DRYING / UNKNOWN
 results, final_records = complete_agarbatti_pipeline(IMAGE_PATH, model, DRYING_STATUS)
 ```
 
-Per-stick output: `class, confidence, box, width_px, height_px, aspect_ratio, width_mm/height_mm (if PIXELS_PER_MM set), mean BGR/HSV, brightness, status, grade, action, reason`.
+Each record carries class, confidence, box, size and colour features plus status, grade, action and reason. A batch summary table counts Grade A, Grade C, Reject and Manual Check.
 
-Grading table:
+Grading rules:
 
 | Condition | Grade | Action |
 |---|---|---|
@@ -238,19 +180,16 @@ Grading table:
 | Bent | REJECT | REMOVE |
 | `UNDER_DRYING` | GRADE C | KEEP DRYING |
 | `UNKNOWN` | MANUAL CHECK | CHECK SENSORS |
-| confidence < 50% | MANUAL CHECK | RECHECK IMAGE |
-| Ready but width/length/brightness outside calibrated range | GRADE C | DOWNGRADE / CHECK |
-| Ready + drying complete + all checks pass | GRADE A | ACCEPT |
+| Confidence below threshold | MANUAL CHECK | RECHECK IMAGE |
+| Ready but measurements outside calibrated range | GRADE C | DOWNGRADE / CHECK |
+| Ready, drying complete, all checks pass | GRADE A | ACCEPT |
 
-Keep `MIN_WIDTH_PX etc = None` until measured from 30+ real good samples. For mm: `PIXELS_PER_MM` via ruler/ArUco at inspection plane (e.g. 10 mm = 120 px → 12.0).
+Dimensional and brightness limits are set from real good samples; pixel-to-mm conversion requires a fixed camera position and a ruler/ArUco reference at the inspection plane.
 
 ## B.3 Dashboard
 
-Files: `dashboard/smart-agarbatti-dashboard.html` (double-click, needs internet for CDN) + `.jsx` source.
+`dashboard/smart-agarbatti-dashboard.html` runs directly in the browser (CDN libraries, internet required); source in `smart-agarbatti-dashboard.jsx`. The `qualityDecision()` function ports the notebook decision rules to JS, and in-browser measurement (greyscale, threshold, bounding box, brightness) mirrors the notebook measurement step. To use the trained model, `mockYoloClassify()` is replaced with a call to an inspection backend:
 
-- `qualityDecision()` = JS port of notebook `quality_decision()` — same grades.
-- Real in-browser measurement (greyscale + threshold + bbox + brightness) = stand-in for `measure_detected_object` + `extract_colour_features`.
-- To connect the trained model, replace `mockYoloClassify()` with:
 ```js
 const form = new FormData();
 form.append("image", imageBlob);
@@ -258,77 +197,67 @@ const res = await fetch("/api/inspect", { method: "POST", body: form });
 const data = await res.json();
 return { class: data.prediction, confidence: data.confidence };
 ```
-- Features: upload/camera, threshold sliders, batch pie/bar/line charts, history, export.
+
+Features: image upload, confidence/dimension/brightness and temperature-humidity thresholds, batch statistics with charts, per-piece checklist with reason, history view.
 
 ---
 
-# PART C — SIMULATION (IMPORTANT)
+# PART C — SIMULATION
 
-> This is the primary visual demo when physical hardware cannot run continuously. Judges must understand what it proves and what it does NOT prove.
+Live page: https://dayarchive-del.github.io/Digital-Pioneers_1/simulation/working-model.html
+File: `simulation/working-model.html` (Three.js via CDN, opens directly in a browser).
 
-File: `simulation/working-model.html` (Three.js r128 via CDN, open directly in browser).
+The page is an ESP32 control-logic simulation with a 3D chamber view — it demonstrates the controller behaviour, not real heat transfer. Its own header and footer state this: "ESP32 control-logic simulation" and "Simulation of control logic only. It does not model real heat transfer or moisture loss."
 
-## C.1 What It Is
+## C.1 What the Page Contains
 
-Faithful **ESP32 control-logic + chamber visualisation**, NOT a physics engine:
-- 3D chamber: walls, heater, fans, trolleys, sensor point, airflow indicators
-- Same state machine + thresholds + pin map as `firmware/smart_drying_chamber.ino`
-- Proves: stage transitions, fan/heater/LED/buzzer logic, trolley auto-eject on READY, over-temp ERROR, serial-monitor logging
+- 3D viewport with Normal / Exploded / Cutaway views, Reset cam, Labels toggle; drag to rotate, scroll to zoom, click a part for its label.
+- Status panel: stage indicator, live Temperature, Humidity and Elapsed readings, heater/fan/LED chips, temperature-humidity chart.
+- Controls panel: START / STOP / RESET buttons, trolley slide button, time scale 1x / 5x / 20x.
+- Manual sensor override: Auto physics vs Manual mode with temperature (0–80°C) and humidity (0–100%) sliders.
+- Solar and battery panel: sunlight slider, battery percentage, with the note that a 10–20 W panel is a charging demo and cannot continuously run a heater load of this size.
+- Test runner: runs a scripted sequence with per-step results.
+- Serial monitor: scrolling log of stage transitions and events.
 
-## C.2 How To Demo (2 min)
+## C.2 Demo Script (2 min)
 
-1. Open file → views: Normal / Exploded / Cutaway, toggle Labels, drag-rotate / scroll-zoom, click part for label.
-2. Press START → watch `IDLE → STAGE1 → STAGE2 → STAGE3 → COOLING → READY`, temp/RH/chart live, chips for heater/fans/LED.
-3. Drag Sunlight slider → battery % changes. Switch Time-scale 1x/5x/20x to fast-forward.
-4. Toggle Manual sensor override → drag Temp/RH sliders to force STAGE jumps / force ERROR (>60°C).
-5. Press “Slide trolleys out”, then “Run test sequence” → green checks in test runner.
-6. Point to Serial Monitor log + footer disclaimer: *“Simulation of control logic only. It does not model real heat transfer or moisture loss.”* — keep this line, it builds trust.
+1. Open the live link, press START, watch `IDLE → STAGE1 → STAGE2 → STAGE3 → COOLING → READY` on the stage indicator with the chart moving.
+2. Switch time scale to 20x to fast-forward; drag the sunlight slider to move the battery reading.
+3. Switch to Manual override, drag temperature above 60°C to force the ERROR state, then RESET.
+4. Try Exploded and Cutaway views, then run the test sequence and show the serial monitor log.
 
-## C.3 What It Is NOT
+## C.3 Simulation-to-Hardware Mapping
 
-- No heat-transfer / CFD / moisture-diffusion modelling.
-- No solar-yield or battery-discharge modelling beyond indicator.
-- Drying times are accelerated for demo, not real kinetics.
-- Always pair with Part A (real ESP32 serial log) + Part B (real inspection table) to show sim → real mapping.
-
-## C.4 Sim ↔ Real Mapping
-
-| Simulation element | Real counterpart |
+| Simulation element | Hardware counterpart |
 |---|---|
-| `updateController()` JS | `loop()` in `firmware/smart_drying_chamber.ino` |
-| Temp/RH sliders (manual) | DHT22 readings |
-| Heater/fan chips | Relay GPIOs 25/26/27 |
-| Stage label + chart | OLED + Serial prints |
-| Trolley auto-eject message | Operator unloads on READY beep |
-| `ERROR` on >60°C | Same cutoff in firmware |
+| `updateController()` in page JS | `loop()` in `firmware/smart_drying_chamber.ino` |
+| Manual temp/RH sliders | DHT22 readings |
+| Heater/fan/LED chips | Relay and indicator GPIOs 25/26/27, 16/17/18 |
+| Stage label + chart | OLED display + serial prints |
+| Trolley slide button | Operator loading/unloading on READY beep |
+| ERROR above 60°C | Same cutoff in firmware |
 
 ---
 
-## 🚀 Quick Demo for Judges (5 min)
+## Judge Demo (5 min)
 
-1. Open `simulation/...Working-Model.html` → START → show STAGE1→2→3→COOLING→READY, trolley auto-eject.
-2. Open `dashboard/smart-agarbatti-dashboard.html` → upload 3 photos (Ready/Broken/Bent) → show grades + reasons + batch summary.
-3. Open `ai-pipeline/...FINAL...ipynb` in Colab → Run All → show DataFrame + YOLO boxes + batch summary.
-4. Show ESP32 + chamber (or photo/video) + `firmware/*.ino` serial log.
-5. One-liner: *“ESP32 smart drying, manual camera placement, YOLOv8 defect detection, OpenCV measurements, rule-based explainable grading.”*
-6. Follow the calibration checklist in the notebook (Section 21).
+1. Simulation link → START → full stage cycle to READY.
+2. Dashboard link → upload Ready, Broken and Bent photos → grades with reasons and batch summary.
+3. Notebook in Colab → Run All → result table, detection plot, batch summary.
+4. Hardware: ESP32 with chamber (or photos/video) plus firmware serial log.
 
----
+## Calibration Notes
 
-## Calibration notes
+- Train the classifier on the project dataset (`best.pt`) with a held-out test set before the final demo.
+- Fix camera position and lighting; report pixels until ruler/ArUco calibration is done, then enable mm.
+- Set width, length and brightness limits from measured good samples.
+- Size the solar input and battery for the demo runtime given the heater load.
+- Full checklist: notebook Section 21.
 
-- Train the dashboard classifier on the project dataset (`best.pt`) before the final demo.
-- Report pixels until ruler/ArUco calibration is done, then enable mm.
-- Size the solar input and battery for the demo runtime (heater load).
-- Simulation covers control logic; heat transfer is accelerated for demo.
-- Drying status comes from the ESP32 sensors, not from vision.
-
----
-
-## 👥 Team — SIH 2026
+## Team — SIH 2026
 
 - Presentation template: `docs/SIH2026-IDEA-Presentation-Format.pdf`
 
-## 📄 License
+## License
 
 MIT — see `LICENSE`.
